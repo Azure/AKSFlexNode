@@ -34,10 +34,6 @@ const (
 
 // Run starts the machine-driven daemon loop.
 func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
-	if log == nil {
-		return fmt.Errorf("logger is nil")
-	}
-
 	// controller-runtime intentionally emits a warning and drops its internal
 	// logs unless the process explicitly configures its global logger.
 	ctrl.SetLogger(logr.FromSlogHandler(log.Handler()))

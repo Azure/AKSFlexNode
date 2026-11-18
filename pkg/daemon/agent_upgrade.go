@@ -137,10 +137,6 @@ func agentUpgradeHelperPaths(log *slog.Logger, mode isolation.Mode) (map[string]
 // RecoverAgentUpgrade selects the applied worker before deployment restores the
 // last-good agent. Image deployments have no host worker mode to select.
 func RecoverAgentUpgrade(ctx context.Context, log *slog.Logger, message string) error {
-	if log == nil {
-		return fmt.Errorf("logger is nil")
-	}
-
 	if agentdeployment.Containerized() {
 		return agentdeployment.RecoverAgentUpgrade(ctx, log, message, config.DefaultIsolationMode, nil)
 	}

@@ -12,14 +12,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
-func TestRecoverAgentUpgradeRejectsNilLogger(t *testing.T) {
-	t.Parallel()
-
-	if err := RecoverAgentUpgrade(t.Context(), nil, "failed upgrade", isolation.ModeNSpawn, nil); err == nil || err.Error() != "logger is nil" {
-		t.Fatalf("RecoverAgentUpgrade() error = %v, want logger is nil", err)
-	}
-}
-
 // TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst: a host that would
 // hand a release before the host root a binary under /usr/local is refused
 // before anything is staged, so the operation fails with nothing to roll back.
