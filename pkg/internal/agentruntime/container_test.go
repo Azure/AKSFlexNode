@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
@@ -552,6 +553,35 @@ func TestContainerTeardownPropagatesStopFailure(t *testing.T) {
 				t.Fatalf("removed unrelated SDK artifact: %v", err)
 			}
 		})
+	}
+}
+
+func TestContainerTeardownPropagatesConfigRemovalFailure(t *testing.T) {
+	t.Parallel()
+
+	f := newContainerTeardownFixture(t)
+	if err := os.Remove(f.modules); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(f.modules, 0o750); err != nil {
+		t.Fatal(err)
+	}
+	blocker := filepath.Join(f.modules, "blocked")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := (&ociTeardown{Teardown: f.teardown}).Destroy().Do(t.Context())
+	if !errors.Is(err, syscall.ENOTEMPTY) {
+		t.Fatalf("configuration removal error = %v, want nonempty-directory failure", err)
+	}
+	if _, err := os.Stat(f.sharedConfig); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("SDK destruction did not precede configuration removal: %v", err)
+	}
+	for _, path := range []string{blocker, f.unrelated} {
+		if _, err := os.Stat(path); err != nil {
+			t.Fatalf("configuration removal failure changed %s: %v", path, err)
+		}
 	}
 }
 
