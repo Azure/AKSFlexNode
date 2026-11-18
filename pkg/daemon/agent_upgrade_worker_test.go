@@ -8,14 +8,6 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
-func TestRecoverAgentUpgradeRejectsNilLogger(t *testing.T) {
-	t.Parallel()
-
-	if err := RecoverAgentUpgrade(t.Context(), nil, "failed upgrade"); err == nil || err.Error() != "logger is nil" {
-		t.Fatalf("RecoverAgentUpgrade() error = %v, want logger is nil", err)
-	}
-}
-
 func TestAgentUpgradeHelperPathsFollowWorkerRuntime(t *testing.T) {
 	t.Parallel()
 

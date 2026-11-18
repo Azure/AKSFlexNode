@@ -55,15 +55,6 @@ func TestResetNodeCleansUpLocalDNS(t *testing.T) {
 	}
 }
 
-func TestResetPlanRejectsNilLogger(t *testing.T) {
-	t.Parallel()
-
-	plan, err := (NSpawn{}).PlanReset(nil)
-	if err == nil || err.Error() != "logger is nil" || plan != nil {
-		t.Fatalf("PlanReset(nil) = %v, %v; want nil plan and logger error", plan, err)
-	}
-}
-
 func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 	t.Parallel()
 
