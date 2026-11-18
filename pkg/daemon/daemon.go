@@ -155,7 +155,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		Resolve:              config.ResolveMachineGoalState,
 		AgentUpgrade:         upgrades,
 		Gate:                 gate,
-	})
+	}, daemon.SystemHostRebooter{})
 	if err != nil {
 		return err
 	}
@@ -189,8 +189,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			ctx,
 			log,
 			func(ctx context.Context) error {
-				if _, enabled := machineOperations.(*flexMachineOperationReconciler); enabled {
-					if err := publishHostSoftReboots(ctx, log, directClient, directClient, aksMachineName, readBootID); err != nil {
+				if flex, enabled := machineOperations.(*flexMachineOperationReconciler); enabled {
+					if err := flex.softReboot.PublishStartup(ctx); err != nil {
 						return fmt.Errorf("publish HostSoftReboot startup results: %w", err)
 					}
 				}

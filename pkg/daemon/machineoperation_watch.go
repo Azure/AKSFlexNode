@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -15,11 +16,11 @@ import (
 // Flex has a Node but no Machina Machine CR. Queue selectors without consulting
 // the cache; dispatch checks the current Node labels through the API reader.
 type flexMachineOperationReconciler struct {
-	delegate    agentdaemon.MachineOperationRequestReconciler
-	handlers    agentdaemon.MachineOperationHandlers
-	reader      client.Reader
-	machineName string
-	nodeName    string
+	delegate   agentdaemon.MachineOperationRequestReconciler
+	handlers   agentdaemon.MachineOperationHandlers
+	reader     client.Reader
+	target     flexHostSoftRebootTarget
+	softReboot *agentdaemon.HostSoftRebootHandler
 }
 
 func (r *flexMachineOperationReconciler) SetupController(b *builder.TypedBuilder[agentdaemon.Request]) *builder.TypedBuilder[agentdaemon.Request] {
@@ -34,7 +35,7 @@ func (r *flexMachineOperationReconciler) mapOperation(_ context.Context, obj cli
 	if _, ok := r.handlers[op.Spec.OperationKind]; !ok || op.Spec.OperationKind.IsAllocationOperation() {
 		return nil
 	}
-	if op.Spec.MachineRef != "" && op.Spec.MachineRef != r.machineName {
+	if op.Spec.MachineRef != "" && op.Spec.MachineRef != r.target.Reference() {
 		return nil
 	}
 	if op.Spec.MachineRef == "" && op.Spec.MachineSelector == nil {
@@ -59,10 +60,28 @@ func (r *flexMachineOperationReconciler) ReconcileMachineOperation(ctx context.C
 		return ctrl.Result{}, nil
 	}
 
-	matches, err := matchesFlexMachine(ctx, r.reader, &op, r.machineName, r.nodeName)
-	if err != nil || !matches {
-		return ctrl.Result{}, err
+	if op.Spec.MachineRef != "" && op.Spec.MachineRef != r.target.Reference() {
+		return ctrl.Result{}, nil
+	}
+	if op.Spec.MachineRef == "" {
+		if op.Spec.MachineSelector == nil {
+			return ctrl.Result{}, nil
+		}
+
+		selector, err := metav1.LabelSelectorAsSelector(op.Spec.MachineSelector)
+		if err != nil {
+			return ctrl.Result{}, nil
+		}
+
+		matches, err := r.target.MatchSelector(ctx, r.reader, op.Spec.OperationKind, selector)
+		if err != nil || !matches {
+			return ctrl.Result{}, err
+		}
 	}
 
 	return r.delegate.ReconcileMachineOperation(ctx, name)
+}
+
+func operationPending(phase machinav1alpha3.OperationPhase) bool {
+	return phase == "" || phase == machinav1alpha3.OperationPhasePending
 }

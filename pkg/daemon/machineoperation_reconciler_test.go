@@ -76,7 +76,7 @@ func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 		MachineOperationMode: machineOperationModeDisable,
 		Runtime:              &fakeWorkerRuntime{},
 		AgentUpgrade:         &fakeAgentUpgradeExecutor{},
-	})
+	}, &fakeHostRebooter{})
 	if err != nil {
 		t.Fatalf("machineOperationReconciler: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestMachineOperationReconcilerAbsentAPISkipsHostReboots(t *testing.T) {
 		Log:          discardLogger(),
 		Runtime:      &fakeWorkerRuntime{},
 		AgentUpgrade: &fakeAgentUpgradeExecutor{},
-	})
+	}, &fakeHostRebooter{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestMachineOperationReconcilerRequiresDependencies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := machineOperationReconciler(tt.opts)
+			_, err := machineOperationReconciler(tt.opts, &fakeHostRebooter{})
 			if err == nil {
 				t.Fatal("machineOperationReconciler error = nil, want error")
 			}
@@ -183,7 +183,7 @@ func TestMachineOperationReconcilerEnabledRequiresNames(t *testing.T) {
 				AKSMachineName: tt.aksMachineName,
 				Runtime:        &fakeWorkerRuntime{},
 				AgentUpgrade:   &fakeAgentUpgradeExecutor{},
-			})
+			}, &fakeHostRebooter{})
 			if err == nil {
 				t.Fatal("machineOperationReconciler error = nil, want error")
 			}
@@ -897,7 +897,7 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 				ClearConfig:  testTask{name: "remove-runtime-dirs"},
 				AgentUpgrade: &fakeAgentUpgradeExecutor{},
 				Gate:         newStartupGate(),
-			})
+			}, &fakeHostRebooter{})
 			if err != nil {
 				t.Fatalf("machineOperationReconciler: %v", err)
 			}

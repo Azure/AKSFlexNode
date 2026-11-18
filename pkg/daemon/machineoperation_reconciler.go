@@ -54,18 +54,14 @@ type machineOperationHandlers struct {
 	clearConfig  phases.Task
 	agentUpgrade agentUpgradeExecutor
 	gate         *startupGate
-	client       client.Client
-	reader       client.Reader
-	machineName  string
-	nodeName     string
-	readBootID   func() (string, error)
-	rebootHost   func(context.Context, *slog.Logger) error
+	softReboot   *daemon.HostSoftRebootHandler
 }
 
 // machineOperationReconciler runs MachineOperations when the Machina CRD is available.
 // TODO: Add a new machineOperationMode value when ARM-backed MachineOperations are supported.
 func machineOperationReconciler(
 	opts machineOperationReconcilerOptions,
+	host daemon.HostRebooter,
 ) (daemon.MachineOperationRequestReconciler, error) {
 	if opts.Client == nil {
 		return nil, fmt.Errorf("kubernetes client is nil")
@@ -121,6 +117,14 @@ func machineOperationReconciler(
 		return nil, fmt.Errorf("startup gate is nil")
 	}
 
+	target := flexHostSoftRebootTarget{machineName: opts.AKSMachineName, nodeName: opts.NodeName}
+	softReboot, err := daemon.NewHostSoftRebootHandler(
+		opts.Client, opts.Reader, opts.Log, target, host, &opts.Gate.stopping,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create HostSoftReboot handler: %w", err)
+	}
+
 	handlers := &machineOperationHandlers{
 		log:          opts.Log,
 		runtime:      opts.Runtime,
@@ -131,12 +135,7 @@ func machineOperationReconciler(
 		clearConfig:  opts.ClearConfig,
 		agentUpgrade: opts.AgentUpgrade,
 		gate:         opts.Gate,
-		client:       opts.Client,
-		reader:       opts.Reader,
-		machineName:  opts.AKSMachineName,
-		nodeName:     opts.NodeName,
-		readBootID:   readBootID,
-		rebootHost:   daemon.RebootHost,
+		softReboot:   softReboot,
 	}
 	// A previously queued event or retry can run after an operation finishes.
 	// Read its current status from the API server to avoid replaying the action.
@@ -160,11 +159,11 @@ func machineOperationReconciler(
 		"Machina MachineOperation API found; enabling machine operation reconciler",
 	)
 	return &flexMachineOperationReconciler{
-		delegate:    reconciler,
-		handlers:    operationHandlers,
-		reader:      opts.Reader,
-		machineName: opts.AKSMachineName,
-		nodeName:    opts.NodeName,
+		delegate:   reconciler,
+		handlers:   operationHandlers,
+		reader:     opts.Reader,
+		target:     target,
+		softReboot: softReboot,
 	}, nil
 }
 

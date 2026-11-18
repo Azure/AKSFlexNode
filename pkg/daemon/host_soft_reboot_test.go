@@ -9,6 +9,7 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/labels"
 	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -23,10 +25,12 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func softOperation(name string) *machinav1alpha3.MachineOperation {
@@ -76,8 +80,66 @@ func getSoftOperation(
 	return &op
 }
 
+const hostSoftRebootRetry = 10 * time.Second
+
+type fakeHostRebooter struct {
+	bootID func() (string, error)
+	reboot func(context.Context, *slog.Logger) error
+}
+
+func (f *fakeHostRebooter) BootID() (string, error) {
+	return f.bootID()
+}
+
+func (f *fakeHostRebooter) RebootHost(ctx context.Context, log *slog.Logger) error {
+	return f.reboot(ctx, log)
+}
+
+func newTestSoftHandler(
+	t *testing.T,
+	c client.Client,
+	reader client.Reader,
+	host *fakeHostRebooter,
+	stopping *atomic.Bool,
+) *agentdaemon.HostSoftRebootHandler {
+	t.Helper()
+
+	target := flexHostSoftRebootTarget{machineName: "machine1", nodeName: "node1"}
+	handler, err := agentdaemon.NewHostSoftRebootHandler(c, reader, discardLogger(), target, host, stopping)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	return handler
+}
+
+func newTestStartupHandler(t *testing.T, c client.Client, bootID func() (string, error)) *agentdaemon.HostSoftRebootHandler {
+	t.Helper()
+
+	host := &fakeHostRebooter{
+		bootID: bootID,
+		reboot: func(context.Context, *slog.Logger) error {
+			t.Fatal("startup publication invoked reboot")
+			return nil
+		},
+	}
+
+	return newTestSoftHandler(t, c, c, host, &atomic.Bool{})
+}
+
+func operationTargetStatus(status *machinav1alpha3.MachineOperationStatus, ref string) *machinav1alpha3.MachineOperationTargetStatus {
+	for i := range status.Targets {
+		if status.Targets[i].MachineRef == ref {
+			return &status.Targets[i]
+		}
+	}
+
+	return nil
+}
+
 type softHarness struct {
 	handlers   *machineOperationHandlers
+	host       *fakeHostRebooter
 	reconciler gatedMachineOperationReconciler
 	calls      int
 }
@@ -92,17 +154,14 @@ func newSoftHarness(
 	gate := newStartupGate()
 	gate.open()
 	h := &softHarness{}
+	h.host = &fakeHostRebooter{bootID: func() (string, error) { return "boot1", nil }}
 	h.handlers = &machineOperationHandlers{
 		log:          discardLogger(),
-		client:       c,
-		reader:       reader,
-		machineName:  "machine1",
-		nodeName:     "node1",
 		gate:         gate,
 		agentUpgrade: &fakeAgentUpgradeExecutor{},
-		readBootID:   func() (string, error) { return "boot1", nil },
+		softReboot:   newTestSoftHandler(t, c, reader, h.host, &gate.stopping),
 	}
-	h.handlers.rebootHost = func(ctx context.Context, _ *slog.Logger) error {
+	h.host.reboot = func(ctx context.Context, _ *slog.Logger) error {
 		h.calls++
 		op := getSoftOperation(t, reader, "soft")
 		target := operationTargetStatus(&op.Status, "machine1")
@@ -131,11 +190,11 @@ func newSoftHarness(
 
 	h.reconciler = gatedMachineOperationReconciler{
 		delegate: &flexMachineOperationReconciler{
-			delegate:    sdk,
-			handlers:    handlers,
-			reader:      reader,
-			machineName: "machine1",
-			nodeName:    "node1",
+			delegate:   sdk,
+			handlers:   handlers,
+			reader:     reader,
+			target:     flexHostSoftRebootTarget{machineName: "machine1", nodeName: "node1"},
+			softReboot: h.handlers.softReboot,
 		},
 		gate: gate,
 	}
@@ -277,7 +336,7 @@ func TestHostSoftRebootHoldsActivationLock(t *testing.T) {
 			}).Build()
 			h := newSoftHarness(t, c, c)
 			h.handlers.agentUpgrade = lock
-			h.handlers.rebootHost = func(context.Context, *slog.Logger) error {
+			h.host.reboot = func(context.Context, *slog.Logger) error {
 				calls++
 				if !lock.held || lock.closed != 0 {
 					t.Error("command ran without the activation lock")
@@ -431,7 +490,7 @@ func TestHostSoftRebootUncertainStatusWriteNeverRunsCommand(t *testing.T) {
 				t.Fatalf("rewrote an unacknowledged start: writes = %d", writes)
 			}
 
-			if err := publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return "boot1", nil }); err != nil {
+			if err := newTestStartupHandler(t, c, func() (string, error) { return "boot1", nil }).PublishStartup(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 
@@ -461,7 +520,7 @@ func TestHostSoftRebootCommandFailureAndCancellation(t *testing.T) {
 			h := newSoftHarness(t, c, c)
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			h.handlers.rebootHost = func(context.Context, *slog.Logger) error {
+			h.host.reboot = func(context.Context, *slog.Logger) error {
 				if canceled {
 					cancel()
 				}
@@ -572,7 +631,7 @@ func TestPublishHostSoftReboots(t *testing.T) {
 				}).Build()
 
 			publish := func() error {
-				return publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return tc.current, nil })
+				return newTestStartupHandler(t, c, func() (string, error) { return tc.current, nil }).PublishStartup(t.Context())
 			}
 
 			if err := publish(); err != nil {
@@ -634,10 +693,10 @@ func TestPublishHostSoftReboots(t *testing.T) {
 		other := issuedSoftOperation("other", "machine1", "boot1")
 		other.Spec.OperationKind = machinav1alpha3.OperationAgentUpgrade
 		c := softClient(foreign, missing, terminal, other)
-		if err := publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) {
+		if err := newTestStartupHandler(t, c, func() (string, error) {
 			t.Error("read boot ID unnecessarily")
 			return "", nil
-		}); err != nil {
+		}).PublishStartup(t.Context()); err != nil {
 			t.Fatal(err)
 		}
 		for _, op := range []*machinav1alpha3.MachineOperation{foreign, missing, terminal, other} {
@@ -699,7 +758,7 @@ func TestPublishHostSoftRebootsRejectsStaleList(t *testing.T) {
 				},
 			}).Build()
 
-			if err := publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return "boot2", nil }); err != nil {
+			if err := newTestStartupHandler(t, c, func() (string, error) { return "boot2", nil }).PublishStartup(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if gets != 1 {
@@ -737,12 +796,12 @@ func TestPublishHostSoftRebootsReadAndWriteErrors(t *testing.T) {
 					return c.SubResource(sub).Update(ctx, obj, opts...)
 				},
 			}).Build()
-			err := publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) {
+			err := newTestStartupHandler(t, c, func() (string, error) {
 				if failure == "boot" {
 					return "", errors.New("boot failed")
 				}
 				return "boot2", nil
-			})
+			}).PublishStartup(t.Context())
 			if err == nil {
 				t.Fatal("publication failure returned no error")
 			}
@@ -751,6 +810,51 @@ func TestPublishHostSoftRebootsReadAndWriteErrors(t *testing.T) {
 			}
 		})
 	}
+}
+
+func observedBlocker(t *testing.T, c client.Client) (string, error) {
+	t.Helper()
+
+	probe := softOperation("probe")
+	if err := c.Create(t.Context(), probe); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := 0
+	host := &fakeHostRebooter{
+		bootID: func() (string, error) { return "boot1", nil },
+		reboot: func(context.Context, *slog.Logger) error {
+			calls++
+			return nil
+		},
+	}
+	handler := newTestSoftHandler(t, c, c, host, &atomic.Bool{})
+	result, err := handler.Reconcile(t.Context(), agentdaemon.MachineOperation{Name: probe.Name})
+	if err != nil {
+		return "", err
+	}
+	if result.RequeueAfter == 0 {
+		if calls != 1 {
+			t.Fatalf("unblocked reboot calls = %d, want 1", calls)
+		}
+		return "", nil
+	}
+
+	if result.RequeueAfter != hostSoftRebootRetry || calls != 0 {
+		t.Fatalf("blocked: requeue = %v, reboot calls = %d", result.RequeueAfter, calls)
+	}
+
+	status := getSoftOperation(t, c, probe.Name).Status
+	if status.Phase != machinav1alpha3.OperationPhasePending {
+		t.Fatalf("blocked phase = %s, want Pending", status.Phase)
+	}
+
+	const prefix = "waiting for out-of-band host operation "
+	if !strings.HasPrefix(status.Message, prefix) {
+		t.Fatalf("blocked message = %q", status.Message)
+	}
+
+	return strings.TrimPrefix(status.Message, prefix), nil
 }
 
 func TestOutOfBandHostOperations(t *testing.T) {
@@ -864,7 +968,7 @@ func TestOutOfBandHostOperations(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			c := softClient(node.DeepCopy(), tc.op)
-			got, err := unfinishedOutOfBandHostOperation(t.Context(), c, "machine1", "node1")
+			got, err := observedBlocker(t, c)
 			if err != nil || (got != "") != tc.want {
 				t.Fatalf("blocker = %q, err = %v", got, err)
 			}
@@ -878,7 +982,7 @@ func TestOutOfBandHostOperations(t *testing.T) {
 		a.CreationTimestamp = metav1.NewTime(time.Unix(1, 0))
 		b.CreationTimestamp = a.CreationTimestamp
 		newer.CreationTimestamp = metav1.NewTime(time.Unix(2, 0))
-		got, err := unfinishedOutOfBandHostOperation(t.Context(), softClient(b, newer, a), "machine1", "node1")
+		got, err := observedBlocker(t, softClient(b, newer, a))
 		if err != nil || got != "a" {
 			t.Fatalf("blocker = %q, err = %v", got, err)
 		}
@@ -1169,12 +1273,12 @@ func TestHostSoftRebootStartupPublicationRetriesBeforeGateOpens(t *testing.T) {
 						t.Fatalf("failed publication changed boot ID: %+v", op.Status.Targets[0])
 					}
 				}
-				return publishHostSoftReboots(ctx, discardLogger(), c, c, "machine1", func() (string, error) {
+				return newTestStartupHandler(t, c, func() (string, error) {
 					if failure == "boot" && attempts == 1 {
 						return "", errors.New("temporary boot read failure")
 					}
 					return "boot2", nil
-				})
+				}).PublishStartup(ctx)
 			}, func() (*agentdeployment.UpgradeSignal, error) {
 				return nil, nil
 			}, noHeldAssets, gate.open, time.Millisecond)
@@ -1199,7 +1303,7 @@ func TestHostSoftRebootInitialBootReadFailure(t *testing.T) {
 
 	c := softClient(softOperation("soft"))
 	h := newSoftHarness(t, c, c)
-	h.handlers.readBootID = func() (string, error) { return "", errors.New("boot failed") }
+	h.host.bootID = func() (string, error) { return "", errors.New("boot failed") }
 
 	if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
 		t.Fatalf("boot failure publication: %v", err)
@@ -1292,7 +1396,7 @@ func TestHostSoftRebootFailedPublicationDoesNotReplayCommand(t *testing.T) {
 		},
 	}).Build()
 	h := newSoftHarness(t, c, c)
-	h.handlers.rebootHost = func(context.Context, *slog.Logger) error {
+	h.host.reboot = func(context.Context, *slog.Logger) error {
 		h.calls++
 		return errors.New("command failed")
 	}
@@ -1316,6 +1420,225 @@ func TestHostSoftRebootFailedPublicationDoesNotReplayCommand(t *testing.T) {
 	}
 	if h.calls != 1 || writes != 2 {
 		t.Fatalf("replayed the failed command: calls = %d, writes = %d", h.calls, writes)
+	}
+}
+
+func TestHostSoftRebootConsumerWiring(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+
+			op := softOperation("soft")
+			op.Spec.MachineRef = ""
+			op.Spec.MachineSelector = &metav1.LabelSelector{
+				MatchLabels: map[string]string{"rack": "a"},
+			}
+			node := &corev1.Node{
+				ObjectMeta: metav1.ObjectMeta{
+					Name:   "node1",
+					Labels: map[string]string{"rack": "a"},
+				},
+			}
+			c := fake.NewClientBuilder().WithScheme(newScheme()).WithRESTMapper(machineOperationRESTMapper()).
+				WithStatusSubresource(&machinav1alpha3.MachineOperation{}).WithObjects(op, node).Build()
+			worker := &fakeWorkerRuntime{}
+			lock := &trackingActivationLock{
+				fakeAgentUpgradeExecutor: &fakeAgentUpgradeExecutor{},
+			}
+			gate := newStartupGate()
+			gate.open()
+			log := discardLogger()
+			ctx := t.Context()
+			bootID := "boot1"
+			calls := 0
+			host := &fakeHostRebooter{
+				bootID: func() (string, error) { return bootID, nil },
+				reboot: func(gotCtx context.Context, gotLog *slog.Logger) error {
+					calls++
+					if gotCtx != ctx || gotLog != log {
+						t.Fatal("host command did not receive the reconcile context and logger")
+					}
+					if !lock.held || !gate.stopping.Load() {
+						t.Fatal("host command ran without activation lock and stopping gate")
+					}
+					current := getSoftOperation(t, c, "soft")
+					target := operationTargetStatus(&current.Status, "machine1")
+					if current.Status.Phase != machinav1alpha3.OperationPhaseInProgress {
+						t.Fatalf("aggregate not started: %+v", current.Status)
+					}
+					if target == nil {
+						t.Fatal("target missing before host command")
+					}
+					if target.Phase != machinav1alpha3.OperationPhaseInProgress {
+						t.Fatalf("target not started: %+v", target)
+					}
+					if target.BootID != "boot1" {
+						t.Fatalf("target boot evidence = %q", target.BootID)
+					}
+					if current.Status.ObservedMachineGeneration != 0 || target.ObservedGeneration != 0 {
+						t.Fatalf("Flex acquired a Machine generation: %+v", current.Status)
+					}
+
+					return nil
+				},
+			}
+			reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
+				Client:         c,
+				Reader:         c,
+				Log:            log,
+				NodeName:       "node1",
+				AKSMachineName: "machine1",
+				Runtime:        worker,
+				State:          worker,
+				Config: &config.Config{
+					Bootstrap: config.BootstrapConfig{Isolation: mode},
+				},
+				Uninstall:    worker.uninstall,
+				ClearConfig:  testTask{name: "clear"},
+				Resolve:      fakeResolveMachine,
+				AgentUpgrade: lock,
+				Gate:         gate,
+			}, host)
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			flex, ok := reconciler.(*flexMachineOperationReconciler)
+			if !ok {
+				t.Fatalf("reconciler type = %T", reconciler)
+			}
+			if len(flex.mapOperation(ctx, op)) != 1 {
+				t.Fatal("matching Node selector was not queued")
+			}
+
+			wrapped := gatedMachineOperationReconciler{delegate: reconciler, gate: gate}
+			if _, err := wrapped.ReconcileMachineOperation(ctx, "soft"); err != nil {
+				t.Fatal(err)
+			}
+			if calls != 1 || worker.restarted || lock.closed != 1 || lock.held {
+				t.Fatalf("calls = %d, worker restarted = %v, lock closed = %d, held = %v", calls, worker.restarted, lock.closed, lock.held)
+			}
+
+			bootID = "boot2"
+			if err := flex.softReboot.PublishStartup(ctx); err != nil {
+				t.Fatal(err)
+			}
+
+			current := getSoftOperation(t, c, "soft")
+			if current.Status.Phase != machinav1alpha3.OperationPhaseComplete || current.Status.Targets[0].MachineRef != "machine1" {
+				t.Fatalf("startup status = %+v", current.Status)
+			}
+		})
+	}
+}
+
+func TestHostSoftRebootExplicitReferenceNeedsNoNodeOrMachine(t *testing.T) {
+	t.Parallel()
+
+	c := fake.NewClientBuilder().WithScheme(newScheme()).
+		WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
+		WithObjects(softOperation("soft")).WithInterceptorFuncs(interceptor.Funcs{
+		Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+			if _, ok := obj.(*machinav1alpha3.MachineOperation); !ok {
+				return fmt.Errorf("unexpected lookup of %T", obj)
+			}
+
+			return c.Get(ctx, key, obj, opts...)
+		},
+	}).Build()
+	h := newSoftHarness(t, c, c)
+	if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
+		t.Fatal(err)
+	}
+	if h.calls != 1 {
+		t.Fatalf("host reboot calls = %d, want 1", h.calls)
+	}
+}
+
+func TestFlexHostSoftRebootTarget(t *testing.T) {
+	t.Parallel()
+
+	target := flexHostSoftRebootTarget{machineName: "machine1", nodeName: "node1"}
+	if target.Reference() != "machine1" {
+		t.Fatalf("reference = %q", target.Reference())
+	}
+	generation, err := target.ObservedGeneration(t.Context(), softClient())
+	if err != nil || generation != 0 {
+		t.Fatalf("generation = %d, error = %v", generation, err)
+	}
+
+	selector, err := metav1.LabelSelectorAsSelector(&metav1.LabelSelector{
+		MatchExpressions: []metav1.LabelSelectorRequirement{
+			{
+				Key:      "rack",
+				Operator: metav1.LabelSelectorOpIn,
+				Values:   []string{"a", "b"},
+			},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name    string
+		rack    string
+		readErr error
+		want    bool
+		wantErr bool
+	}{
+		{
+			name: "matching node",
+			rack: "a",
+			want: true,
+		},
+		{
+			name: "nonmatching node",
+			rack: "c",
+		},
+		{
+			name: "missing node",
+		},
+		{
+			name:    "read failure",
+			readErr: errors.New("unavailable"),
+			wantErr: true,
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			objects := []client.Object{}
+			if tc.rack != "" {
+				objects = append(objects, &corev1.Node{
+					ObjectMeta: metav1.ObjectMeta{
+						Name:   "node1",
+						Labels: map[string]string{"rack": tc.rack},
+					},
+				})
+			}
+			c := fake.NewClientBuilder().WithScheme(newScheme()).WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					if _, ok := obj.(*corev1.Node); !ok || key.Name != "node1" {
+						return fmt.Errorf("unexpected lookup %T %s", obj, key.Name)
+					}
+					if tc.readErr != nil {
+						return tc.readErr
+					}
+
+					return c.Get(ctx, key, obj, opts...)
+				},
+			}).Build()
+
+			matches, err := target.MatchSelector(t.Context(), c, machinav1alpha3.OperationHostPowerOff, selector)
+			if matches != tc.want || (err != nil) != tc.wantErr {
+				t.Fatalf("match = %v, error = %v", matches, err)
+			}
+			if tc.wantErr && (!errors.Is(err, tc.readErr) || !strings.Contains(err.Error(), "get Node node1")) {
+				t.Fatalf("error lacks Node context: %v", err)
+			}
+		})
 	}
 }
 
@@ -1357,7 +1680,7 @@ func TestFlexOperationWatchUsesLiveIdentityAndLabels(t *testing.T) {
 	}
 
 	missingNode := softClient(op.DeepCopy())
-	matches, err := matchesFlexMachine(t.Context(), missingNode, op, "machine1", "node1")
+	matches, err := watch.target.MatchSelector(t.Context(), missingNode, op.Spec.OperationKind, labels.SelectorFromSet(labels.Set{"rack": "a"}))
 	if err != nil || matches {
 		t.Fatalf("missing Node: match = %v, error = %v", matches, err)
 	}
