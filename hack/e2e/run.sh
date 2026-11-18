@@ -219,6 +219,9 @@ cmd_all() {
   validate_all_nodes
   smoke_test_all || exit_code=1
 
+  # ── Host reboot through MachineOperation on each nspawn join path ─────
+  host_soft_reboot_all
+
   # ── Host nspawn lifecycle restart ──────────────────────────────────────
   nspawn_lifecycle_all
 
