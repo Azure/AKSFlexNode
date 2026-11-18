@@ -93,7 +93,9 @@ func TestRecoverStartupWorkerUsesAppliedState(t *testing.T) {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 
-			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: mode}}
+			cfg := &config.Config{
+				Bootstrap: config.BootstrapConfig{Isolation: mode},
+			}
 			appliedConfig := &agentconfig.AgentConfig{}
 			applied := &State{ActiveMachine: "kube2", NodeConfig: appliedConfig}
 			worker := &startupRecoveryRuntime{}
@@ -116,7 +118,9 @@ func TestRecoverStartupWorkerUsesAppliedState(t *testing.T) {
 func TestRecoverStartupWorkerPropagatesFailure(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNone}}
+	cfg := &config.Config{
+		Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNone},
+	}
 	worker := &startupRecoveryRuntime{err: errors.New("recovery failed")}
 	err := recoverStartupWorker(t.Context(), cfg, discardLogger(), worker, &State{})
 	if err == nil || !strings.Contains(err.Error(), "recover worker at startup: recovery failed") {
