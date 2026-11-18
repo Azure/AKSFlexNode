@@ -127,6 +127,7 @@ Earlier configs can contain `azure.arc.machineName`, `azure.arc.resourceGroup`, 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
 | `bootstrap.isolation` | string | Worker runtime: `nspawn` (default), `none` (host-native kubelet/containerd), or experimental `container` (OCI worker). Changing modes requires reset. | `none` |
+| `bootstrap.experimental.containerIsolation` | boolean | Required explicit opt-in when `bootstrap.isolation` is `container`. Defaults to `false`. | `true` |
 | `bootstrap.ociImage` | string | Optional nspawn rootfs OCI image used during bootstrap. When omitted, the shared agent default image selection is used. | `ghcr.io/example/aks-flex-node-rootfs:ubuntu-24.04` |
 | `bootstrap.offlineArtifacts.source` | string | Optional complete offline binary artifact bundle source. Supports absolute paths, `file://`, and unauthenticated `oci://` artifact references. The value is rendered as a strict Go template with `.KubernetesVersion` and `.KubernetesVersionNoV`. Preflight treats missing host packages as fatal when this is set. | `/opt/aks-flex-node/artifacts/{{ .KubernetesVersion }}` |
 | `bootstrap.additionalHostDevices` | array of strings | Optional extra host device nodes under `/dev` to expose to the nspawn machine in addition to devices discovered automatically by the shared agent. Entries must be clean absolute `/dev/...` paths. | `["/dev/uinput"]` |

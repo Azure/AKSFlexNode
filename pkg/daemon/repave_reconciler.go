@@ -311,7 +311,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 	if err != nil {
 		return nil, err
 	}
-	if active.State.Isolation != "" && active.State.Isolation != r.cfg.Bootstrap.Isolation {
+	if active.State.Isolation != r.cfg.Bootstrap.Isolation {
 		return nil, fmt.Errorf("worker isolation change requires reset")
 	}
 	cfg, err := configForGoalState(ctx, r.log, r.cfg, r.refresher, goal)
@@ -365,8 +365,11 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 		if err := yurthub.ResetHost(ctx, hubWorker(active.Name, view)); err != nil {
 			return nil, fmt.Errorf("clean host hub before repave: %w", err)
 		}
-	case "", isolation.ModeNSpawn:
+	case isolation.ModeNSpawn:
 		tasks = append(tasks, r.hookUnits(r.log))
+	case isolation.ModeContainer:
+	default:
+		return nil, fmt.Errorf("unsupported worker isolation %q", cfg.Bootstrap.Isolation)
 	}
 	tasks = append(tasks,
 		r.runtime.Start(r.log, input),

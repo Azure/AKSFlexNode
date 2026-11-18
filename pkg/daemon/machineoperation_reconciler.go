@@ -199,7 +199,7 @@ func (h *machineOperationHandlers) restartNode(ctx context.Context) error {
 			Config: active.State.NodeConfig,
 		},
 	}
-	if active.State.Isolation == "" || active.State.Isolation == isolation.ModeNSpawn {
+	if active.State.Isolation == isolation.ModeNSpawn {
 		if active.State.AppliedKubernetesVersion != "" {
 			cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
 		}

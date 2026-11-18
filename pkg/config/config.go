@@ -224,6 +224,9 @@ type BootstrapConfig struct {
 	// Isolation selects the worker runtime independently of agent deployment.
 	Isolation isolation.Mode `json:"isolation,omitempty"`
 
+	// Experimental explicitly enables preview worker features.
+	Experimental *ExperimentalConfig `json:"experimental,omitempty"`
+
 	// OCIImage is the nspawn rootfs OCI image used by the shared agent library.
 	// When empty, the agent uses its built-in default image selection.
 	OCIImage string `json:"ociImage,omitempty"`
@@ -245,6 +248,11 @@ type BootstrapConfig struct {
 	// AdditionalRequiredServices lists host systemd services that must start
 	// successfully before the nspawn machine starts.
 	AdditionalRequiredServices []string `json:"additionalRequiredServices,omitempty"`
+}
+
+// ExperimentalConfig controls bootstrap opt-ins for preview worker features.
+type ExperimentalConfig struct {
+	ContainerIsolation bool `json:"containerIsolation,omitempty"`
 }
 
 // AdditionalHostMount re-exports the shared agent's host bind-mount config.
@@ -962,6 +970,10 @@ func (c *BootstrapConfig) validate() error {
 	if err := ValidateIsolation(c.Isolation); err != nil {
 		return fmt.Errorf("invalid bootstrap.isolation: %w", err)
 	}
+	if c.Isolation == isolation.ModeContainer && (c.Experimental == nil || !c.Experimental.ContainerIsolation) {
+		return fmt.Errorf("bootstrap.experimental.containerIsolation must be true for container isolation")
+	}
+
 	if err := agentconfig.ValidateAdditionalHostDevices(c.AdditionalHostDevices); err != nil {
 		return fmt.Errorf("invalid bootstrap.additionalHostDevices: %w", err)
 	}

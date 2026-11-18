@@ -87,8 +87,10 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		},
 	}
 
-	if cfg.Bootstrap.Isolation == isolation.ModeContainer {
-		ac.Experimental = &agentconfig.ExperimentalConfig{ContainerIsolation: true}
+	if experimental := cfg.Bootstrap.Experimental; experimental != nil {
+		ac.Experimental = &agentconfig.ExperimentalConfig{
+			ContainerIsolation: experimental.ContainerIsolation,
+		}
 	}
 
 	if profile := cfg.Networking.LocalDNS; profile != nil {
