@@ -67,10 +67,6 @@ type HostActivationService struct {
 }
 
 func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() string) (*HostActivationService, UpgradePaths, error) {
-	if log == nil {
-		return nil, UpgradePaths{}, fmt.Errorf("logger is nil")
-	}
-
 	paths := UpgradePathsUnder(root)
 	serviceOptions, err := installedAgentServiceOptions(SystemdSystemDir)
 	if err != nil {

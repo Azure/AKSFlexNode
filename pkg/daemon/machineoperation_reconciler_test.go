@@ -91,13 +91,6 @@ func TestMachineOperationReconcilerRequiresDependencies(t *testing.T) {
 		opts    machineOperationReconcilerOptions
 		wantErr string
 	}{
-		"missing logger": {
-			opts: machineOperationReconcilerOptions{
-				Client:  fake.NewClientBuilder().Build(),
-				Runtime: &fakeWorkerRuntime{},
-			},
-			wantErr: "logger is nil",
-		},
 		"missing client": {
 			opts: machineOperationReconcilerOptions{
 				Log:     slog.Default(),

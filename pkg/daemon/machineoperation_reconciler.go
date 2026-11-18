@@ -56,9 +56,6 @@ type machineOperationHandlers struct {
 func machineOperationReconciler(
 	opts machineOperationReconcilerOptions,
 ) (daemon.MachineOperationRequestReconciler, error) {
-	if opts.Log == nil {
-		return nil, fmt.Errorf("logger is nil")
-	}
 	if opts.Client == nil {
 		return nil, fmt.Errorf("kubernetes client is nil")
 	}

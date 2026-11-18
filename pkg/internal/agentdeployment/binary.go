@@ -103,9 +103,6 @@ func (p UpgradePaths) sharedPaths() (goalstates.AgentUpgradePaths, error) {
 // ensureUpgradeLayout adds Flex-specific ownership validation around the
 // shared idempotent migration and link initialization implementation.
 func ensureUpgradeLayout(ctx context.Context, log *slog.Logger, paths UpgradePaths) error {
-	if log == nil {
-		return fmt.Errorf("logger is nil")
-	}
 	if err := validateAgentUpgradePaths(paths); err != nil {
 		return err
 	}
