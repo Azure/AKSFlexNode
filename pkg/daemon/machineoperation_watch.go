@@ -40,6 +40,7 @@ func (r *flexMachineOperationReconciler) mapOperation(_ context.Context, obj cli
 	if op.Spec.MachineRef == "" && op.Spec.MachineSelector == nil {
 		return nil
 	}
+
 	return []agentdaemon.Request{agentdaemon.NewMachineOperationRequest(op.Name)}
 }
 
@@ -48,16 +49,20 @@ func (r *flexMachineOperationReconciler) ReconcileMachineOperation(ctx context.C
 	if err := r.reader.Get(ctx, client.ObjectKey{Name: name}, &op); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
+
 	if op.Status.IsTerminal() {
 		return ctrl.Result{}, nil
 	}
+
 	// Startup, not another reconcile, judges a reboot already issued.
 	if op.Spec.OperationKind == machinav1alpha3.OperationHostSoftReboot && !operationPending(op.Status.Phase) {
 		return ctrl.Result{}, nil
 	}
+
 	matches, err := matchesFlexMachine(ctx, r.reader, &op, r.machineName, r.nodeName)
 	if err != nil || !matches {
 		return ctrl.Result{}, err
 	}
+
 	return r.delegate.ReconcileMachineOperation(ctx, name)
 }

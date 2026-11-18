@@ -244,7 +244,9 @@ func TestHostSoftRebootHoldsActivationLock(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			lock := &trackingActivationLock{fakeAgentUpgradeExecutor: &fakeAgentUpgradeExecutor{}}
+			lock := &trackingActivationLock{
+				fakeAgentUpgradeExecutor: &fakeAgentUpgradeExecutor{},
+			}
 			objects := []client.Object{softOperation("soft")}
 			if tc.wait {
 				blocker := softOperation("oob")
@@ -335,6 +337,7 @@ func TestHostSoftRebootWriteFailureAndLockContention(t *testing.T) {
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
+
 			c := fake.NewClientBuilder().WithScheme(newScheme()).WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
 				WithObjects(softOperation("soft")).WithInterceptorFuncs(interceptor.Funcs{
 				SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
@@ -344,8 +347,10 @@ func TestHostSoftRebootWriteFailureAndLockContention(t *testing.T) {
 					return c.SubResource(sub).Update(ctx, obj, opts...)
 				},
 			}).Build()
+
 			h := newSoftHarness(t, c, c)
 			h.handlers.agentUpgrade = &fakeAgentUpgradeExecutor{acquireErr: tc.lockErr}
+
 			result, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft")
 			if (err != nil) != tc.wantError {
 				t.Fatalf("error = %v, want error %v", err, tc.wantError)
@@ -375,6 +380,7 @@ func TestHostSoftRebootUncertainStatusWriteNeverRunsCommand(t *testing.T) {
 
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
+
 			writes := 0
 			c := fake.NewClientBuilder().WithScheme(newScheme()).
 				WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
@@ -393,7 +399,9 @@ func TestHostSoftRebootUncertainStatusWriteNeverRunsCommand(t *testing.T) {
 					return nil
 				},
 			}).Build()
+
 			h := newSoftHarness(t, c, c)
+
 			_, err := h.reconciler.ReconcileMachineOperation(ctx, "soft")
 			if err == nil {
 				t.Fatal("lost write response returned no error")
@@ -401,6 +409,7 @@ func TestHostSoftRebootUncertainStatusWriteNeverRunsCommand(t *testing.T) {
 			if h.calls != 0 {
 				t.Fatalf("reboot calls = %d, want 0", h.calls)
 			}
+
 			op := getSoftOperation(t, c, "soft")
 			if op.Status.Phase != machinav1alpha3.OperationPhaseInProgress {
 				t.Fatalf("aggregate phase = %s", op.Status.Phase)
@@ -415,17 +424,28 @@ func TestHostSoftRebootUncertainStatusWriteNeverRunsCommand(t *testing.T) {
 			if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
 				t.Fatal(err)
 			}
-			if h.calls != 0 || writes != 1 {
-				t.Fatalf("replayed an unacknowledged start: calls = %d, writes = %d", h.calls, writes)
+			if h.calls != 0 {
+				t.Fatalf("replayed an unacknowledged start: calls = %d", h.calls)
+			}
+			if writes != 1 {
+				t.Fatalf("rewrote an unacknowledged start: writes = %d", writes)
 			}
 
 			if err := publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return "boot1", nil }); err != nil {
 				t.Fatal(err)
 			}
+
 			op = getSoftOperation(t, c, "soft")
+			if op.Status.Phase != machinav1alpha3.OperationPhaseFailed {
+				t.Fatalf("startup phase = %s", op.Status.Phase)
+			}
+
 			condition := apimeta.FindStatusCondition(op.Status.Conditions, "Completed")
-			if op.Status.Phase != machinav1alpha3.OperationPhaseFailed || condition == nil || condition.Reason != "RebootNotObserved" {
-				t.Fatalf("startup judgment = %+v", op.Status)
+			if condition == nil {
+				t.Fatal("missing startup completion condition")
+			}
+			if condition.Reason != "RebootNotObserved" {
+				t.Fatalf("startup completion reason = %s", condition.Reason)
 			}
 		})
 	}
@@ -550,6 +570,7 @@ func TestPublishHostSoftReboots(t *testing.T) {
 						return c.SubResource(sub).Update(ctx, obj, opts...)
 					},
 				}).Build()
+
 			publish := func() error {
 				return publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return tc.current, nil })
 			}
@@ -557,6 +578,7 @@ func TestPublishHostSoftReboots(t *testing.T) {
 			if err := publish(); err != nil {
 				t.Fatal(err)
 			}
+
 			op := getSoftOperation(t, c, "soft")
 			condition := apimeta.FindStatusCondition(op.Status.Conditions, "Completed")
 			if op.Status.Phase != tc.phase {
@@ -593,6 +615,7 @@ func TestPublishHostSoftReboots(t *testing.T) {
 			if err := publish(); err != nil {
 				t.Fatal(err)
 			}
+
 			after := getSoftOperation(t, c, "soft")
 			if writes != 1 {
 				t.Fatalf("second pass wrote status: writes = %d", writes)
