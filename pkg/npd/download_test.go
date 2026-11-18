@@ -8,6 +8,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/preflight"
 )
 
@@ -57,7 +58,7 @@ func TestOfflineArtifactsDisableNPD(t *testing.T) {
 		t.Fatalf("Preflight()[0].Check()[0].Severity = %q, want warning", results[0].Severity)
 	}
 
-	download := Download(slog.Default(), cfg, t.TempDir())
+	download := Download(slog.Default(), cfg, isolation.DirRoot{Dir: t.TempDir()})
 	if download.Name() != "download-npd" {
 		t.Fatalf("Download().Name() = %q", download.Name())
 	}
@@ -69,7 +70,7 @@ func TestOfflineArtifactsDisableNPD(t *testing.T) {
 		t.Fatalf("Download() = %T, want disabledTask", download)
 	}
 
-	start := Start(slog.Default(), cfg, &goalstates.NodeStart{})
+	start := Start(slog.Default(), cfg, isolation.DirRoot{Dir: t.TempDir()}, &goalstates.NodeStart{}, isolation.ModeNSpawn)
 	if start.Name() != "start-npd" {
 		t.Fatalf("Start().Name() = %q", start.Name())
 	}

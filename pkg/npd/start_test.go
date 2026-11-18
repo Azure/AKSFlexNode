@@ -9,6 +9,9 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/container"
+	"github.com/Azure/unbounded/pkg/agent/isolation/none"
 )
 
 // wantKubeconfigPath is the path the kubelet actually writes its kubeconfig to.
@@ -35,37 +38,54 @@ func TestCanonicalKubeletKubeconfigPath(t *testing.T) {
 // test stable across refactors while still exercising the Start() wiring.
 func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 	t.Parallel()
-	machineDir := t.TempDir()
-	nodeStart := &goalstates.NodeStart{
-		MachineDir:  machineDir,
-		MachineName: "kube1",
-		NodeName:    "vm-e2e-token-1781659839",
-		Kubelet: goalstates.Kubelet{
-			APIServer: "https://example.hcp.westus.azmk8s.io:443",
-		},
-	}
-	task, ok := Start(slog.Default(), &config.Config{}, nodeStart).(*startTask)
-	if !ok {
-		t.Fatalf("Start did not return *startTask")
-	}
-	if _, err := task.ensureServiceFile(); err != nil {
-		t.Fatalf("ensureServiceFile: %v", err)
-	}
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeContainer, isolation.ModeNone} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+			machineDir := t.TempDir()
+			var root isolation.NodeRoot = isolation.DirRoot{Dir: machineDir}
+			binaryPath := "/" + npdBinaryPath
+			switch mode {
+			case isolation.ModeContainer:
+				root = container.Root{SlotName: "kube1", Dir: machineDir, HostRoot: t.TempDir()}
+			case isolation.ModeNone:
+				root = none.Root{HostRoot: machineDir, Layout: none.Layout{Base: t.TempDir()}, Version: "v1"}
+				binaryPath = filepath.Join(machineDir, npdBinaryPath)
+			}
+			nodeStart := &goalstates.NodeStart{
+				MachineDir:  t.TempDir(),
+				MachineName: "kube1",
+				NodeName:    "vm-e2e-token-1781659839",
+				Kubelet: goalstates.Kubelet{
+					APIServer: "https://example.hcp.westus.azmk8s.io:443",
+				},
+			}
+			task, ok := Start(slog.Default(), &config.Config{}, root, nodeStart, mode).(*startTask)
+			if !ok {
+				t.Fatal("Start did not return *startTask")
+			}
+			if _, err := task.ensureServiceFile(); err != nil {
+				t.Fatalf("ensureServiceFile: %v", err)
+			}
 
-	unitPath := filepath.Join(machineDir, "etc/systemd/system", systemdUnitNPD)
-	data, err := os.ReadFile(unitPath) //nolint:gosec // path built from test TempDir
-	if err != nil {
-		t.Fatalf("read rendered unit: %v", err)
-	}
-	rendered := string(data)
+			unitPath := filepath.Join(machineDir, "etc/systemd/system", systemdUnitNPD)
+			data, err := os.ReadFile(unitPath) //nolint:gosec // path built from test TempDir
+			if err != nil {
+				t.Fatalf("read rendered unit: %v", err)
+			}
+			rendered := string(data)
 
-	if !strings.Contains(rendered, "auth="+wantKubeconfigPath) {
-		t.Fatalf("rendered unit missing auth=%s:\n%s", wantKubeconfigPath, rendered)
-	}
-	if strings.Contains(rendered, "kubelet/kubelet") {
-		t.Fatalf("rendered unit contains doubled 'kubelet' segment:\n%s", rendered)
-	}
-	if !strings.Contains(rendered, "--hostname-override=vm-e2e-token-1781659839") {
-		t.Fatalf("rendered unit missing hostname override:\n%s", rendered)
+			if !strings.Contains(rendered, "ExecStart="+binaryPath+" ") {
+				t.Fatalf("rendered unit missing executable path %s:\n%s", binaryPath, rendered)
+			}
+			if !strings.Contains(rendered, "auth="+wantKubeconfigPath) {
+				t.Fatalf("rendered unit missing auth=%s:\n%s", wantKubeconfigPath, rendered)
+			}
+			if strings.Contains(rendered, "kubelet/kubelet") {
+				t.Fatalf("rendered unit contains doubled 'kubelet' segment:\n%s", rendered)
+			}
+			if !strings.Contains(rendered, "--hostname-override=vm-e2e-token-1781659839") {
+				t.Fatalf("rendered unit missing hostname override:\n%s", rendered)
+			}
+		})
 	}
 }
