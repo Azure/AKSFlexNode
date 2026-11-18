@@ -17,6 +17,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/phases/host"
 )
 
 func NewCommand() *cobra.Command {
@@ -78,6 +79,12 @@ func runStart(ctx context.Context, cfg *config.Config) error {
 		return err
 	}
 	logger := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
+	if applied == nil {
+		if err := host.EnsureNoExistingDeploymentFor(ctx, logger, cfg.Bootstrap.Isolation); err != nil {
+			return err
+		}
+	}
+
 	if !containerized {
 		if err := agentdeployment.MigrateHostRoot(logger); err != nil {
 			return err
