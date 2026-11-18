@@ -55,11 +55,6 @@ func (r *flexMachineOperationReconciler) ReconcileMachineOperation(ctx context.C
 		return ctrl.Result{}, nil
 	}
 
-	// Startup, not another reconcile, judges a reboot already issued.
-	if op.Spec.OperationKind == machinav1alpha3.OperationHostSoftReboot && !operationPending(op.Status.Phase) {
-		return ctrl.Result{}, nil
-	}
-
 	if op.Spec.MachineRef != "" && op.Spec.MachineRef != r.target.Reference() {
 		return ctrl.Result{}, nil
 	}
