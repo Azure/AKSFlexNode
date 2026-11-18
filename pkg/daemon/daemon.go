@@ -12,6 +12,7 @@ import (
 	"github.com/go-logr/logr"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/fields"
+	"k8s.io/client-go/kubernetes"
 	"k8s.io/client-go/rest"
 	ctrl "sigs.k8s.io/controller-runtime"
 	ctrlcache "sigs.k8s.io/controller-runtime/pkg/cache"
@@ -22,6 +23,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/kubeauth"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/daemoncred"
 )
@@ -140,10 +142,14 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create direct Kubernetes client: %w", err)
 	}
-	hub, err := newDaemonHubAdapter(cfg, log, restCfg)
+	// Bound Node requests so a stalled API cannot hold the serialized queue.
+	hubConfig := rest.CopyConfig(restCfg)
+	hubConfig.Timeout = 30 * time.Second
+	hubClient, err := kubernetes.NewForConfig(hubConfig)
 	if err != nil {
-		return err
+		return fmt.Errorf("create hub node client: %w", err)
 	}
+	hub := yurthub.NewReconciler(log, nodeName, cfg.Azure.TargetAgentPoolName, cfg.APIServerURL(), hubClient.CoreV1().Nodes(), time.Duration(cfg.Agent.MachineReconcileInterval))
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
 		Log:                      log,
 		Machines:                 machines,

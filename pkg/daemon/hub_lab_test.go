@@ -6,14 +6,19 @@ import (
 	"encoding/json"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"testing"
+	"time"
 
-	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/kubeauth"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 )
 
-// TestHubLab drives the production Hub adapter and operations on a disposable,
+// TestHubLab drives the production Hub reconciler and operations on a disposable,
 // already-joined Flex host, with RP intent supplied by a JSON fixture instead of
 // a Machine read. It is excluded from release builds.
 //
@@ -56,12 +61,19 @@ func TestHubLab(t *testing.T) {
 	restCfg.ExecProvider = nil
 	restCfg.CertFile = "/etc/aks-flex-node/daemon-credentials/daemon-controller-current.pem"
 	restCfg.KeyFile = restCfg.CertFile
-	adapter, err := newDaemonHubAdapter(cfg, slog.Default(), restCfg)
+	nodeCfg := rest.CopyConfig(restCfg)
+	nodeCfg.Timeout = 30 * time.Second
+	client, err := kubernetes.NewForConfig(nodeCfg)
 	if err != nil {
 		t.Fatal(err)
 	}
-	goal := aksmachine.GoalState{DisconnectToleranceEnabled: input.Enabled}
-	if err := adapter.ReconcileHub(t.Context(), goal, &State{ActiveMachine: input.ActiveMachine}, nil); err != nil {
+	hub := yurthub.NewReconciler(slog.Default(), cfg.Agent.NodeName, cfg.Azure.TargetAgentPoolName, cfg.APIServerURL(), client.CoreV1().Nodes(), time.Duration(cfg.Agent.MachineReconcileInterval))
+	worker, root := "", ""
+	if validActiveMachine(input.ActiveMachine) {
+		worker = input.ActiveMachine
+		root = filepath.Join("/var/lib/machines", worker)
+	}
+	if err := hub.Reconcile(t.Context(), input.Enabled, worker, root, nil); err != nil {
 		t.Fatal(err)
 	}
 }
