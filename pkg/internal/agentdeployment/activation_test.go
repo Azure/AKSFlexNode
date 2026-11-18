@@ -41,7 +41,7 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 	}
 }
 
-func TestFlexDaemonActivationLeavesInactiveResetHostStopped(t *testing.T) {
+func TestFlexDaemonActivationLeavesInactiveServiceStopped(t *testing.T) {
 	t.Parallel()
 
 	binary := filepath.Join(t.TempDir(), "candidate")
