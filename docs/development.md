@@ -312,26 +312,27 @@ Prereleases keep their changes under `Unreleased`; they do not require a permane
 
 ### Publishing a Release
 
-After the release pull request is merged, run the **Release** workflow from the `main` branch. The repository's `release` GitHub Environment should be configured with required reviewers so publishing requires explicit approval. Supply a SemVer version using one of these forms:
+For stable, beta, and RC releases, merge the release pull request and run the **Release** workflow from `main`; the target commit must be reachable from `main`. Alpha releases (`-alpha.N`) may run from an integration branch and target a commit outside `main`. That branch must be allowed by the repository's `release` GitHub Environment, which still requires explicit reviewer approval before publishing. Supply a SemVer version using one of these forms:
 
 - Stable: `v0.3.0`
 - Prerelease: `v0.3.0-alpha.1`, `v0.3.0-beta.1`, or `v0.3.0-rc.1`
 
-Record the full commit SHA from an up-to-date `main` branch, then supply that same `target_sha` to both workflow runs:
+Record the full commit SHA from the release branch (`main` for stable, beta, and RC), then supply that same `target_sha` to both workflow runs:
 
 ```bash
-git fetch origin main
-git rev-parse origin/main
+release_branch=main
+git fetch origin "$release_branch"
+git rev-parse "origin/$release_branch"
 ```
 
-Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and controller image without creating a tag or publishing anything. If it succeeds, rerun the workflow with `dry_run` disabled and the same version and `target_sha`. The publishing run:
+Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and both container images without creating a tag or publishing anything. If it succeeds, rerun the workflow from the same branch with `dry_run` disabled and the same version and `target_sha`. The publishing run:
 
-1. Checks out the explicitly selected commit, verifies it is reachable from `main`, or verifies that an existing tag points to that commit when resuming a release.
+1. Checks out the explicitly selected commit and, except for alphas, verifies it is reachable from `main`. An existing release tag must point to that same commit.
 2. Validates the version and changelog.
 3. Verifies that the required build, test, lint, security, and code-quality checks passed for the selected commit.
 4. Builds release artifacts.
-5. Creates an annotated tag when it does not already exist.
-6. Publishes the controller image, binary archives, checksums, and GitHub Release.
+5. After release-environment approval, creates an annotated tag when it does not already exist.
+6. Publishes the agent and controller images, binary archives, checksums, and GitHub Release.
 
 GitHub Release notes link to `CHANGELOG.md` at the release tag so the referenced content remains immutable. Publishing is idempotent: an existing tag is never moved, while release assets may be replaced when resuming a failed release. Resume a failed release by dispatching the workflow with the existing version and its exact commit SHA.
 
