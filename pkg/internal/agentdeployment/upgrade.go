@@ -291,10 +291,6 @@ const agentRestartTimerAccuracy = "100ms"
 // as it is, and the layout is the one this binary runs from: the recovery
 // script runs the resolved last-good link, so that is the layout systemd uses.
 func RecoverAgentUpgrade(ctx context.Context, log *slog.Logger, message string, mode isolation.Mode, helperPaths map[string]string) error {
-	if log == nil {
-		return fmt.Errorf("logger is nil")
-	}
-
 	if Containerized() {
 		if err := recoverContainerAgentUpgrade(ctx, log, message,
 			NewUpgradeSignalStore(DefaultUpgradePaths().SignalPath),

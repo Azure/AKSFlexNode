@@ -19,10 +19,6 @@ import (
 // PreflightHostAgentActivation validates the applied mode against a private
 // candidate and plans activation without changing the installed layout or units.
 func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
-	if log == nil {
-		return agentbinary.ActivationPlan{}, fmt.Errorf("logger is nil")
-	}
-
 	if agentdeployment.Containerized() {
 		return agentbinary.ActivationPlan{}, agentdeployment.ErrDirectActivationInContainer
 	}
@@ -46,10 +42,6 @@ func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candida
 // ActivateHostAgent activates a directly staged Flex agent binary. It uses the
 // same lock and binary layout as MachineOperation upgrades.
 func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationResult, error) {
-	if log == nil {
-		return agentbinary.ActivationResult{}, fmt.Errorf("logger is nil")
-	}
-
 	if agentdeployment.Containerized() {
 		return agentbinary.ActivationResult{}, agentdeployment.ErrDirectActivationInContainer
 	}
@@ -95,10 +87,6 @@ type flexDaemonActivationService struct {
 }
 
 func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string, candidatePath string) (*flexDaemonActivationService, agentdeployment.UpgradePaths, error) {
-	if log == nil {
-		return nil, agentdeployment.UpgradePaths{}, fmt.Errorf("logger is nil")
-	}
-
 	root := resolveRoot()
 	state, err := NewFileStateStore()
 	if err != nil {
