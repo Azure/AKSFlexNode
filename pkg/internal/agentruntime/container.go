@@ -18,6 +18,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 )
@@ -101,7 +102,20 @@ func (r containerRuntime) Start(log *slog.Logger, input Inputs) phases.Task {
 			if err != nil {
 				return err
 			}
+			slot := containerSlot(input.Node.Slot)
+			if slot != containerSlot(input.Previous.Slot) && node.Backend().SlotExists(slot) {
+				// SDK Upgrade also checks this, but its internal Destroy can erase
+				// the trace before returning an error. Retain it on every failure.
+				if err := node.Destroy(ctx); err != nil {
+					return fmt.Errorf("upgrade OCI worker: remove stale slot %s: %w", slot,
+						errors.Join(err, retainContainerSlot(node.Backend(), slot)))
+				}
+			}
 			if err := node.Upgrade(ctx, r.node(log, *input.Previous)); err != nil {
+				// Upgrade may also destroy the target during abandon or rollback.
+				if slot != containerSlot(input.Previous.Slot) {
+					err = errors.Join(err, retainContainerBPFFSSlot(node.Backend(), slot))
+				}
 				return fmt.Errorf("upgrade OCI worker: %w", err)
 			}
 			// SDK rollback ends when Upgrade returns, before this NPD action.
@@ -177,11 +191,58 @@ func RewriteContainerHostRoot(ctx context.Context, log *slog.Logger, input Node)
 
 func (r containerRuntime) Retire(log *slog.Logger, input Inputs) phases.Task {
 	return hostnode.Func("retire-oci-worker", func(ctx context.Context) error {
-		if err := r.node(log, *input.Previous).Destroy(ctx); err != nil {
+		node := r.node(log, *input.Previous)
+		if err := node.Destroy(ctx); err != nil {
 			log.Warn("could not remove superseded OCI slot; next repave retries", "error", err)
+			if keepErr := retainContainerSlot(node.Backend(), containerSlot(input.Previous.Slot)); keepErr != nil {
+				return errors.Join(err, keepErr)
+			}
 		}
 		return nil
 	})
+}
+
+func containerSlot(slot string) string {
+	if slot == "" {
+		return containerops.Slot
+	}
+	return slot
+}
+
+// A failed SDK destroy may remove both SlotExists traces before unmounting
+// bpffs. Recreate its rootfs trace so the next cleanup cannot reuse the slot.
+func retainContainerSlot(backend *container.Backend, slot string) error {
+	if err := container.ValidSlot(slot); err != nil {
+		return err
+	}
+	if backend.SlotExists(slot) {
+		return nil
+	}
+	if err := os.MkdirAll(backend.Layout.RootfsDir(slot), 0o750); err != nil {
+		return fmt.Errorf("retain OCI slot %s ownership: %w", slot, err)
+	}
+	return nil
+}
+
+// Upgrade and reset can fail outside slot destruction. Only restore a missing
+// slot trace there when its bpffs path survived, including an unmounted but
+// unremoved path; the SDK provides no separate cleanup result for each slot.
+func retainContainerBPFFSSlot(backend *container.Backend, slot string) error {
+	if err := container.ValidSlot(slot); err != nil {
+		return err
+	}
+	if backend.SlotExists(slot) {
+		return nil
+	}
+
+	path := filepath.Join(backend.SourceRoot, container.BPFFSPath(slot))
+	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
+		return nil
+	} else if err != nil {
+		return fmt.Errorf("inspect OCI slot %s bpffs: %w", slot, err)
+	}
+
+	return retainContainerSlot(backend, slot)
 }
 
 func (containerRuntime) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(log) }
@@ -232,9 +293,24 @@ func containerTeardown(teardown *containerops.Teardown) phases.Task {
 			}
 		}()
 
+		backend := &container.Backend{
+			Layout:     teardown.Layout,
+			SystemdDir: teardown.SystemdDir,
+			SourceRoot: teardown.Root,
+		}
+		var present []string
+		for _, slot := range []string{goalstates.NSpawnMachineKube1, goalstates.NSpawnMachineKube2} {
+			if backend.SlotExists(slot) {
+				present = append(present, slot)
+			}
+		}
+
 		// Destroy stops existing supervisors and checks that every container is
 		// gone, including slots whose unit was never written or was removed.
 		if err := teardown.Destroy().Do(ctx); err != nil {
+			for _, slot := range present {
+				err = errors.Join(err, retainContainerBPFFSSlot(backend, slot))
+			}
 			return fmt.Errorf("tear down OCI worker: %w", err)
 		}
 		if err := teardown.RemoveConfig().Do(ctx); err != nil {
