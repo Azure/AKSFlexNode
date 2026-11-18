@@ -249,8 +249,7 @@ func TestContainerUpgradeUnpackInstallsHelper(t *testing.T) {
 					OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
 				},
 			}
-			materialized := false
-			gs, err := bindContainerArtifacts(node, slog.New(slog.DiscardHandler), cfg, &materialized)
+			gs, err := bindContainerArtifacts(node, slog.New(slog.DiscardHandler), cfg)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -332,37 +331,8 @@ func TestContainerUpgradeInstallsHelperBeforeProvisionAndActivation(t *testing.T
 	}
 }
 
-func TestContainerResetRemovesOnlyUpgradeSnapshot(t *testing.T) {
-	t.Parallel()
-
-	root := t.TempDir()
-	dir := filepath.Join(root, goalstates.AgentConfigDir)
-	if err := os.MkdirAll(filepath.Join(dir, "container-upgrade-config"), 0o700); err != nil {
-		t.Fatal(err)
-	}
-	for _, name := range []string{"container-upgrade-config/credentials", "none-upgrade-journal.json", "unrelated"} {
-		if err := os.WriteFile(filepath.Join(dir, name), []byte("secret"), 0o600); err != nil {
-			t.Fatal(err)
-		}
-	}
-	for range 2 {
-		if err := removeContainerUpgradeArtifact(root); err != nil {
-			t.Fatal(err)
-		}
-	}
-	if _, err := os.Stat(filepath.Join(dir, "container-upgrade-config")); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("snapshot remains: %v", err)
-	}
-	for _, name := range []string{"none-upgrade-journal.json", "unrelated"} {
-		if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
-			t.Fatalf("lost %s: %v", name, err)
-		}
-	}
-}
-
 type containerTeardownFixture struct {
 	teardown       *containerops.Teardown
-	snapshot       string
 	modules        string
 	sharedConfig   string
 	unrelated      string
@@ -380,18 +350,17 @@ func newContainerTeardownFixture(t *testing.T) *containerTeardownFixture {
 	layout := container.Layout{Base: filepath.Join(dir, "containers")}
 	systemdDir := filepath.Join(dir, "systemd")
 	f := &containerTeardownFixture{
-		snapshot:     filepath.Join(root, goalstates.AgentConfigDir, containerUpgradeSnapshot),
 		modules:      filepath.Join(root, noneops.ModulesLoadPath),
 		sharedConfig: filepath.Join(root, "var/lib/kubelet/config.yaml"),
-		unrelated:    filepath.Join(root, goalstates.AgentConfigDir, "none-upgrade-journal.json"),
+		unrelated:    filepath.Join(root, "unrelated"),
 		unit:         filepath.Join(systemdDir, container.UnitName("kube1")),
 	}
-	for _, path := range []string{layout.RootfsDir("kube1"), f.snapshot, systemdDir, filepath.Dir(f.modules), filepath.Dir(f.sharedConfig)} {
+	for _, path := range []string{layout.RootfsDir("kube1"), systemdDir, filepath.Dir(f.modules), filepath.Dir(f.sharedConfig)} {
 		if err := os.MkdirAll(path, 0o750); err != nil {
 			t.Fatal(err)
 		}
 	}
-	for _, path := range []string{filepath.Join(f.snapshot, "credentials"), f.modules, f.sharedConfig, f.unrelated} {
+	for _, path := range []string{f.modules, f.sharedConfig, f.unrelated} {
 		if err := os.WriteFile(path, []byte("retained"), 0o600); err != nil {
 			t.Fatal(err)
 		}
@@ -438,7 +407,7 @@ func (f *containerTeardownFixture) run(_ context.Context, _ *slog.Logger, name s
 	return "", nil
 }
 
-func TestContainerTeardownKeepsSnapshotUntilSafe(t *testing.T) {
+func TestContainerTeardownPreservesSharedFilesUntilSafe(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
@@ -468,11 +437,11 @@ func TestContainerTeardownKeepsSnapshotUntilSafe(t *testing.T) {
 			if err := os.WriteFile(f.teardown.MountInfo, []byte(mount), 0o600); err != nil {
 				t.Fatal(err)
 			}
-			task := containerTeardown(f.teardown)
+			task := (&ociTeardown{Teardown: f.teardown}).Destroy()
 			if err := task.Do(t.Context()); err == nil || !strings.Contains(err.Error(), "still mounted") {
 				t.Fatalf("expected mount safety failure, got %v", err)
 			}
-			for _, path := range []string{filepath.Join(f.snapshot, "credentials"), f.modules, f.sharedConfig, f.teardown.Layout.RootfsDir("kube1")} {
+			for _, path := range []string{f.modules, f.sharedConfig, f.teardown.Layout.RootfsDir("kube1")} {
 				if _, err := os.Stat(path); err != nil {
 					t.Fatalf("unsafe teardown removed %s: %v", path, err)
 				}
@@ -491,7 +460,7 @@ func TestContainerTeardownKeepsSnapshotUntilSafe(t *testing.T) {
 			if f.stops != tc.wantStops || f.missingStops != 0 {
 				t.Fatalf("stop calls=%d, missing-unit stops=%d", f.stops, f.missingStops)
 			}
-			for _, path := range []string{f.snapshot, f.modules, f.sharedConfig} {
+			for _, path := range []string{f.modules, f.sharedConfig} {
 				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("teardown retained %s: %v", path, err)
 				}
@@ -511,13 +480,13 @@ func TestContainerTeardownStopsRunningSupervisor(t *testing.T) {
 		t.Fatal(err)
 	}
 	f.containerAlive = true
-	if err := containerTeardown(f.teardown).Do(t.Context()); err != nil {
+	if err := (&ociTeardown{Teardown: f.teardown}).Destroy().Do(t.Context()); err != nil {
 		t.Fatal(err)
 	}
 	if f.stops != 1 || f.missingStops != 0 || f.containerAlive {
 		t.Fatalf("stops=%d missing-unit stops=%d live=%t", f.stops, f.missingStops, f.containerAlive)
 	}
-	for _, path := range []string{f.snapshot, f.modules, f.sharedConfig} {
+	for _, path := range []string{f.modules, f.sharedConfig} {
 		if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
 			t.Fatalf("teardown retained %s: %v", path, err)
 		}
@@ -551,11 +520,11 @@ func TestContainerTeardownPropagatesStopFailure(t *testing.T) {
 			}
 			f.stopErr = errors.New("stop failed")
 			f.containerAlive = tc.alive
-			task := containerTeardown(f.teardown)
+			task := (&ociTeardown{Teardown: f.teardown}).Destroy()
 			if err := task.Do(t.Context()); !errors.Is(err, f.stopErr) {
 				t.Fatalf("stop error lost: %v", err)
 			}
-			for _, path := range []string{filepath.Join(f.snapshot, "credentials"), f.modules, f.sharedConfig, f.unrelated} {
+			for _, path := range []string{f.modules, f.sharedConfig, f.unrelated} {
 				if _, err := os.Stat(path); err != nil {
 					t.Fatalf("failed stop removed %s: %v", path, err)
 				}
@@ -574,8 +543,10 @@ func TestContainerTeardownPropagatesStopFailure(t *testing.T) {
 					t.Fatalf("retry after stop failure: %v", err)
 				}
 			}
-			if _, err := os.Stat(f.snapshot); !errors.Is(err, os.ErrNotExist) {
-				t.Fatalf("snapshot still present after retry: %v", err)
+			for _, path := range []string{f.modules, f.sharedConfig} {
+				if _, err := os.Stat(path); !errors.Is(err, os.ErrNotExist) {
+					t.Fatalf("teardown retained %s after retry: %v", path, err)
+				}
 			}
 			if _, err := os.Stat(f.unrelated); err != nil {
 				t.Fatalf("removed unrelated SDK artifact: %v", err)

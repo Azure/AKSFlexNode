@@ -27,8 +27,8 @@ type testResetRuntime struct {
 	plan agentruntime.ResetPlan
 }
 
-func (r testResetRuntime) PlanReset(*slog.Logger) (agentruntime.ResetPlan, error) {
-	return r.plan, nil
+func (r testResetRuntime) PlanReset(*slog.Logger) agentruntime.ResetPlan {
+	return r.plan
 }
 
 func TestResetPlanCoordinatesHub(t *testing.T) {
@@ -42,7 +42,6 @@ func TestResetPlanCoordinatesHub(t *testing.T) {
 	}{
 		{name: "native worker reset", hostState: true, want: []string{"stop", "hub", "destroy"}},
 		{name: "nspawn only", want: []string{"stop", "destroy"}},
-		{name: "orphan Hub still receives ownership-checked cleanup", hostState: true, want: []string{"stop", "hub", "destroy"}},
 		{name: "stop fails", hostState: true, fail: "stop", want: []string{"stop"}},
 		{name: "hub fails", hostState: true, fail: "hub", want: []string{"stop", "hub"}},
 		{name: "destroy fails", hostState: true, fail: "destroy", want: []string{"stop", "hub", "destroy"}},

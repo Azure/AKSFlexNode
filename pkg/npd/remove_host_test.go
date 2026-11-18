@@ -84,74 +84,19 @@ func assertNPDAbsent(t *testing.T, paths ...string) {
 	}
 }
 
-func TestRemoveHostPreservesUnownedArtifacts(t *testing.T) {
+func TestRemoveHostWithoutUnit(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name   string
-		modify func(*testing.T, string, string)
+		name    string
+		partial bool
 	}{
 		{
-			name: "missing unit offline bootstrap",
-			modify: func(t *testing.T, unit, _ string) {
-				if err := os.Remove(unit); err != nil {
-					t.Fatal(err)
-				}
-			},
+			name: "offline bootstrap",
 		},
 		{
-			name: "independent unit",
-			modify: func(t *testing.T, unit, _ string) {
-				writeNPDFile(t, unit, "[Service]\nExecStart=/usr/bin/node-problem-detector --config.system-log-monitor=/etc/node-problem-detector/kernel-monitor.json\n")
-			},
-		},
-		{
-			name: "paths mentioned in comments",
-			modify: func(t *testing.T, unit, content string) {
-				writeNPDFile(t, unit, "# "+strings.ReplaceAll(content, "\n", "\n# "))
-			},
-		},
-		{
-			name: "different binary",
-			modify: func(t *testing.T, unit, content string) {
-				writeNPDFile(t, unit, strings.Replace(content, "/opt/aks-flex-node/bin/node-problem-detector", "/usr/bin/node-problem-detector", 1))
-			},
-		},
-		{
-			name: "different config",
-			modify: func(t *testing.T, unit, content string) {
-				writeNPDFile(t, unit, strings.Replace(content, npdConfigPath, "/etc/other/monitor.json", 1))
-			},
-		},
-		{
-			name: "additional service command",
-			modify: func(t *testing.T, unit, content string) {
-				writeNPDFile(t, unit, strings.Replace(content, "Restart=on-failure", "ExecStartPre=/usr/bin/other\nRestart=on-failure", 1))
-			},
-		},
-		{
-			name: "symlink to rendered unit",
-			modify: func(t *testing.T, unit, content string) {
-				target := filepath.Join(t.TempDir(), "external.service")
-				writeNPDFile(t, target, content)
-				if err := os.Remove(unit); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Symlink(target, unit); err != nil {
-					t.Fatal(err)
-				}
-			},
-		},
-		{
-			name: "unit is a directory",
-			modify: func(t *testing.T, unit, _ string) {
-				if err := os.Remove(unit); err != nil {
-					t.Fatal(err)
-				}
-				if err := os.Mkdir(unit, 0o700); err != nil {
-					t.Fatal(err)
-				}
-			},
+			name:    "partial installation",
+			partial: true,
 		},
 	}
 
@@ -160,23 +105,14 @@ func TestRemoveHostPreservesUnownedArtifacts(t *testing.T) {
 			t.Parallel()
 
 			root := none.Root{HostRoot: t.TempDir()}
-			unit := renderHostUnit(t, root)
-			content := readNPDFile(t, unit)
-			tt.modify(t, unit, content)
-
-			before, beforeErr := os.Lstat(unit)
-			if beforeErr != nil && !errors.Is(beforeErr, os.ErrNotExist) {
-				t.Fatal(beforeErr)
-			}
-			var unitContent string
-			if beforeErr == nil && (before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0) {
-				unitContent = readNPDFile(t, unit)
-			}
-
+			unit := root.Path(filepath.Join("/etc/systemd/system", systemdUnitNPD))
 			binary := root.Path(npdBinaryPath)
 			config := root.Path(npdConfigPath)
-			writeNPDFile(t, binary, "private binary")
-			writeNPDFile(t, config, "independent config")
+
+			if tt.partial {
+				writeNPDFile(t, binary, "binary")
+				writeNPDFile(t, config, "config")
+			}
 
 			calls := 0
 			task := newTestRemoveHost(t, root, func(_ context.Context, _ *slog.Logger, _ string, _ ...string) (string, error) {
@@ -187,28 +123,11 @@ func TestRemoveHostPreservesUnownedArtifacts(t *testing.T) {
 				if err := task.Do(t.Context()); err != nil {
 					t.Fatal(err)
 				}
+				assertNPDAbsent(t, unit, binary, config)
 			}
+
 			if calls != 0 {
 				t.Errorf("systemctl calls = %d, want 0", calls)
-			}
-			if got := readNPDFile(t, binary); got != "private binary" {
-				t.Errorf("binary = %q", got)
-			}
-			if got := readNPDFile(t, config); got != "independent config" {
-				t.Errorf("config = %q", got)
-			}
-			after, afterErr := os.Lstat(unit)
-			if errors.Is(beforeErr, os.ErrNotExist) {
-				if !errors.Is(afterErr, os.ErrNotExist) {
-					t.Fatalf("missing unit changed: %v", afterErr)
-				}
-			} else if afterErr != nil || !os.SameFile(before, after) {
-				t.Fatalf("unowned unit changed: %v", afterErr)
-			}
-			if beforeErr == nil && (before.Mode().IsRegular() || before.Mode()&os.ModeSymlink != 0) {
-				if got := readNPDFile(t, unit); got != unitContent {
-					t.Errorf("unowned unit contents changed: %q", got)
-				}
 			}
 		})
 	}
@@ -252,7 +171,7 @@ func TestRemoveHostReturnsUnitInspectionError(t *testing.T) {
 	root := none.Root{HostRoot: t.TempDir()}
 	writeNPDFile(t, root.Path("/etc/systemd/system"), "not a directory")
 	config := root.Path(npdConfigPath)
-	writeNPDFile(t, config, "independent config")
+	writeNPDFile(t, config, "config")
 
 	calls := 0
 	task := newTestRemoveHost(t, root, func(_ context.Context, _ *slog.Logger, _ string, _ ...string) (string, error) {
@@ -265,7 +184,7 @@ func TestRemoveHostReturnsUnitInspectionError(t *testing.T) {
 	if calls != 0 {
 		t.Errorf("systemctl calls = %d, want 0", calls)
 	}
-	if got := readNPDFile(t, config); got != "independent config" {
+	if got := readNPDFile(t, config); got != "config" {
 		t.Errorf("config changed: %q", got)
 	}
 }
@@ -317,7 +236,7 @@ func TestRemoveHostRetriesPartialRemovalWithFreshTask(t *testing.T) {
 		calls++
 		checkDisableCommand(t, command, args)
 		if got := readNPDFile(t, unit); got != unitContent {
-			t.Error("ownership evidence changed before disable")
+			t.Error("unit changed before disable")
 		}
 		return "", nil
 	}
@@ -326,7 +245,7 @@ func TestRemoveHostRetriesPartialRemovalWithFreshTask(t *testing.T) {
 	}
 	assertNPDAbsent(t, binary)
 	if got := readNPDFile(t, unit); got != unitContent {
-		t.Fatal("ownership evidence changed after partial removal")
+		t.Fatal("unit changed after partial removal")
 	}
 	if got := readNPDFile(t, filepath.Join(config, "blocker")); got != "blocker" {
 		t.Fatalf("blocking file changed: %q", got)

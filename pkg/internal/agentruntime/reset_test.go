@@ -68,23 +68,23 @@ func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 	}{
 		{
 			name: "nspawn only",
-			want: []string{"nspawn-stop", "nspawn-destroy", "artifacts", "shared"},
+			want: []string{"nspawn-stop", "nspawn-destroy", "shared"},
 		},
 		{
 			name:   "native worker",
 			native: true,
-			want:   []string{"nspawn-stop", "none-stop", "nspawn-destroy", "none-destroy", "artifacts", "shared"},
+			want:   []string{"nspawn-stop", "none-stop", "nspawn-destroy", "none-destroy", "shared"},
 		},
 		{
 			name: "OCI worker",
 			oci:  true,
-			want: []string{"nspawn-stop", "oci-stop", "nspawn-destroy", "oci-destroy", "artifacts", "shared"},
+			want: []string{"nspawn-stop", "oci-stop", "nspawn-destroy", "oci-destroy", "shared"},
 		},
 		{
 			name:   "all traces stop before destruction",
 			native: true,
 			oci:    true,
-			want:   []string{"nspawn-stop", "none-stop", "oci-stop", "nspawn-destroy", "none-destroy", "oci-destroy", "artifacts", "shared"},
+			want:   []string{"nspawn-stop", "none-stop", "oci-stop", "nspawn-destroy", "none-destroy", "oci-destroy", "shared"},
 		},
 		{
 			name:       "native stop failure blocks all destruction",
@@ -103,7 +103,7 @@ func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 			want:       []string{"nspawn-stop", "none-stop", "oci-stop"},
 		},
 		{
-			name:       "native destroy failure retains recovery artifacts",
+			name:       "native destroy failure blocks shared cleanup",
 			native:     true,
 			oci:        true,
 			failWorker: "none",
@@ -111,7 +111,7 @@ func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 			want:       []string{"nspawn-stop", "none-stop", "oci-stop", "nspawn-destroy", "none-destroy"},
 		},
 		{
-			name:       "OCI destroy failure retains recovery artifacts",
+			name:       "OCI destroy failure blocks shared cleanup",
 			native:     true,
 			oci:        true,
 			failWorker: "oci",
@@ -138,8 +138,8 @@ func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 				})
 			}
 			log := slog.New(slog.DiscardHandler)
-			plan := discoverReset(log, machine, native, oci, record("shared"), record("artifacts"), false)
-			if (plan.none != nil) != tc.native || (plan.container != nil) != tc.oci {
+			plan := discoverReset(log, machine, native, oci, record("shared"))
+			if plan.HasHostNativeState() != tc.native || (plan.container != nil) != tc.oci {
 				t.Fatal("incorrect discovery")
 			}
 			err := phases.Serial(log, plan.Stop(), plan.Finish()).Do(t.Context())

@@ -8,22 +8,17 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilexec"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
 )
-
-const containerUpgradeSnapshot = "container-upgrade-config"
 
 type containerRuntime struct {
 	newNode       func(containerops.Params) *containerops.Node
@@ -70,7 +65,7 @@ func containerArtifacts(ctx context.Context, log *slog.Logger, cfg *config.Confi
 
 // Upgrade owns preparation and activation, so install guest artifacts in its
 // unpack hook before it can start kubelet.
-func bindContainerArtifacts(node *containerops.Node, log *slog.Logger, cfg *config.Config, materialized *bool) (*goalstates.MachineGoalState, error) {
+func bindContainerArtifacts(node *containerops.Node, log *slog.Logger, cfg *config.Config) (*goalstates.MachineGoalState, error) {
 	gs, err := node.GoalState()
 	if err != nil {
 		return nil, err
@@ -79,11 +74,7 @@ func bindContainerArtifacts(node *containerops.Node, log *slog.Logger, cfg *conf
 	backend := node.Backend()
 	unpack := backend.Unpack
 	backend.Unpack = func(ctx context.Context, spec isolation.NodeSpec, dir string) error {
-		err := unpack(ctx, spec, dir)
-		// An early snapshot failure never reaches unpack and cannot establish
-		// ownership of an otherwise unowned bpffs-only target.
-		*materialized = err == nil || backend.SlotExists(spec.Slot)
-		if err != nil {
+		if err := unpack(ctx, spec, dir); err != nil {
 			return err
 		}
 
@@ -105,29 +96,12 @@ func (r containerRuntime) Start(log *slog.Logger, input Inputs) phases.Task {
 			return fmt.Errorf("stage container image archives: %w", err)
 		}
 		if input.Previous != nil {
-			slot := containerSlot(input.Node.Slot)
-			owned := node.Backend().SlotExists(slot)
-			materialized := false
-			gs, err := bindContainerArtifacts(node, log, input.Config, &materialized)
+			gs, err := bindContainerArtifacts(node, log, input.Config)
 			if err != nil {
 				return err
 			}
 
-			if slot != containerSlot(input.Previous.Slot) && owned {
-				// SDK Upgrade also checks this, but its internal Destroy can erase
-				// the trace before returning an error. Retain it on every failure.
-				if err := node.Destroy(ctx); err != nil {
-					return fmt.Errorf("upgrade OCI worker: remove stale slot %s: %w", slot,
-						errors.Join(err, retainContainerSlot(node.Backend(), slot)))
-				}
-			}
-
 			if err := node.Upgrade(ctx, r.node(log, *input.Previous)); err != nil {
-				// Abandon/rollback can erase a trace created during this upgrade.
-				// A bpffs path alone does not establish target ownership.
-				if slot != containerSlot(input.Previous.Slot) && (owned || materialized) {
-					err = errors.Join(err, retainContainerBPFFSSlot(node.Backend(), slot))
-				}
 				return fmt.Errorf("upgrade OCI worker: %w", err)
 			}
 			// SDK rollback ends when Upgrade returns, before this NPD action.
@@ -203,149 +177,20 @@ func RewriteContainerHostRoot(ctx context.Context, log *slog.Logger, input Node)
 
 func (r containerRuntime) Retire(log *slog.Logger, input Inputs) phases.Task {
 	return hostnode.Func("retire-oci-worker", func(ctx context.Context) error {
-		node := r.node(log, *input.Previous)
-
-		if err := node.Destroy(ctx); err != nil {
-			log.Warn("could not remove superseded OCI slot; next repave retries", "error", err)
-
-			if keepErr := retainContainerSlot(node.Backend(), containerSlot(input.Previous.Slot)); keepErr != nil {
-				return errors.Join(err, keepErr)
-			}
+		if err := r.node(log, *input.Previous).Destroy(ctx); err != nil {
+			log.Warn("could not remove superseded OCI slot", "error", err)
 		}
+
 		return nil
 	})
 }
 
-func containerSlot(slot string) string {
-	if slot == "" {
-		return containerops.Slot
-	}
-	return slot
-}
-
-// A failed SDK destroy may remove both SlotExists traces before unmounting
-// bpffs. Recreate its rootfs trace so the next cleanup cannot reuse the slot.
-func retainContainerSlot(backend *container.Backend, slot string) error {
-	if err := container.ValidSlot(slot); err != nil {
-		return err
-	}
-	if backend.SlotExists(slot) {
-		return nil
-	}
-	if err := os.MkdirAll(backend.Layout.RootfsDir(slot), 0o750); err != nil {
-		return fmt.Errorf("retain OCI slot %s ownership: %w", slot, err)
-	}
-
-	return nil
-}
-
-// Upgrade and reset can fail outside slot destruction. Only restore a missing
-// slot trace there when its bpffs path survived, including an unmounted but
-// unremoved path; the SDK provides no separate cleanup result for each slot.
-func retainContainerBPFFSSlot(backend *container.Backend, slot string) error {
-	if err := container.ValidSlot(slot); err != nil {
-		return err
-	}
-	if backend.SlotExists(slot) {
-		return nil
-	}
-
-	path := filepath.Join(backend.SourceRoot, container.BPFFSPath(slot))
-	if _, err := os.Lstat(path); errors.Is(err, os.ErrNotExist) {
-		return nil
-	} else if err != nil {
-		return fmt.Errorf("inspect OCI slot %s bpffs: %w", slot, err)
-	}
-
-	return retainContainerSlot(backend, slot)
-}
-
-func (containerRuntime) PlanReset(log *slog.Logger) (ResetPlan, error) { return planReset(log) }
+func (containerRuntime) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
 
 type ociTeardown struct {
-	sdk *containerops.Teardown
+	*containerops.Teardown
 }
 
-func (t *ociTeardown) Present() bool { return t.sdk.Present() }
-
-func (t *ociTeardown) Stop() phases.Task {
-	stop := *t.sdk
-	run := stop.Run
-	if run == nil {
-		run = utilexec.OutputCmd
-	}
-	stop.Run = func(ctx context.Context, log *slog.Logger, name string, args ...string) (string, error) {
-		out, err := run(ctx, log, name, args...)
-		if err == nil || ctx.Err() != nil || name != "systemctl" || len(args) != 2 || args[0] != "stop" {
-			return out, err
-		}
-		// SDK Stop treats an absent supervisor as a failure even though it still
-		// verifies runtime shutdown. Suppress only systemd-confirmed absence.
-		state, inspectErr := run(ctx, log, "systemctl", "show", "--property=LoadState", "--value", args[1])
-		if inspectErr != nil {
-			return out, errors.Join(err, fmt.Errorf("inspect OCI supervisor: %w", inspectErr))
-		}
-		if strings.TrimSpace(state) == "not-found" {
-			return out, nil
-		}
-		return out, err
-	}
-	return stop.Stop()
-}
-
-func (t *ociTeardown) Destroy() phases.Task { return containerTeardown(t.sdk) }
-
-func containerTeardown(teardown *containerops.Teardown) phases.Task {
-	return hostnode.Func("reset-oci-node", func(ctx context.Context) (err error) {
-		defer func() {
-			if err == nil {
-				return
-			}
-			// Destroy can remove all slots before returning an error. Retain the
-			// existing SDK ownership trace so a no-State CLI retry still selects OCI.
-			if keepErr := os.MkdirAll(teardown.Layout.RootfsDir(""), 0o750); keepErr != nil {
-				err = errors.Join(err, fmt.Errorf("retain OCI reset ownership: %w", keepErr))
-			}
-		}()
-
-		backend := &container.Backend{
-			Layout:     teardown.Layout,
-			SystemdDir: teardown.SystemdDir,
-			SourceRoot: teardown.Root,
-		}
-		var present []string
-		for _, slot := range []string{goalstates.NSpawnMachineKube1, goalstates.NSpawnMachineKube2} {
-			if backend.SlotExists(slot) {
-				present = append(present, slot)
-			}
-		}
-
-		// Destroy stops existing supervisors and checks that every container is
-		// gone, including slots whose unit was never written or was removed.
-		if err := teardown.Destroy().Do(ctx); err != nil {
-			for _, slot := range present {
-				err = errors.Join(err, retainContainerBPFFSSlot(backend, slot))
-			}
-			return fmt.Errorf("tear down OCI worker: %w", err)
-		}
-		if err := teardown.RemoveConfig().Do(ctx); err != nil {
-			return fmt.Errorf("remove OCI worker configuration: %w", err)
-		}
-		return removeContainerUpgradeArtifact(teardown.Root)
-	})
-}
-
-// CleanupContainerUpgradeArtifact removes an orphaned snapshot without touching worker paths.
-func CleanupContainerUpgradeArtifact() phases.Task {
-	return hostnode.Func("remove-oci-upgrade-artifact", func(context.Context) error {
-		return removeContainerUpgradeArtifact("")
-	})
-}
-
-func removeContainerUpgradeArtifact(hostRoot string) error {
-	path := filepath.Join(hostRoot, goalstates.AgentConfigDir, containerUpgradeSnapshot)
-	if err := os.RemoveAll(path); err != nil {
-		return fmt.Errorf("remove OCI upgrade artifact %s: %w", path, err)
-	}
-	return nil
+func (t *ociTeardown) Destroy() phases.Task {
+	return phases.Serial(t.Log, t.Teardown.Destroy(), t.RemoveConfig())
 }

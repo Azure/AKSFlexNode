@@ -24,11 +24,7 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			paths := testAgentUpgradePaths(t)
 			const previous = "#!/bin/sh\necho previous\n"
 			writeTestFile(t, paths.BinaryPath, previous)
-			// An older nspawn candidate need not implement supports-isolation.
 			candidate := "#!/bin/sh\ntest \"$1\" = version\n"
-			if mode != isolation.ModeNSpawn {
-				candidate = fmt.Sprintf("#!/bin/sh\ncase \"$1\" in version) echo v1;; supports-isolation) test \"$2\" = %s;; *) exit 1;; esac\n", mode)
-			}
 			archive := agentUpgradeTestArchive(t, candidate)
 			digest := sha256.Sum256(archive)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -106,17 +102,6 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 func TestInstallerVerifiesChecksumBeforeExecutingCandidate(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range []isolation.Mode{isolation.ModeNone, isolation.ModeContainer} {
-		t.Run(string(mode), func(t *testing.T) {
-			t.Parallel()
-			testInstallerChecksumBeforeExecution(t, mode)
-		})
-	}
-}
-
-func testInstallerChecksumBeforeExecution(t *testing.T, mode isolation.Mode) {
-	t.Helper()
-
 	marker := filepath.Join(t.TempDir(), "executed")
 	archive := agentUpgradeTestArchive(t, fmt.Sprintf("#!/bin/sh\necho executed > %q\nexit 0\n", marker))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -131,7 +116,7 @@ func testInstallerChecksumBeforeExecution(t *testing.T, mode isolation.Mode) {
 	if err := ensureUpgradeLayout(t.Context(), discardLogger(), paths); err != nil {
 		t.Fatal(err)
 	}
-	if err := installAndSwitchBinary(t.Context(), discardLogger(), server.URL, strings.Repeat("0", 64), paths, mode); err == nil || !strings.Contains(err.Error(), "SHA-256 does not match") {
+	if err := installAndSwitchBinary(t.Context(), discardLogger(), server.URL, strings.Repeat("0", 64), paths); err == nil || !strings.Contains(err.Error(), "SHA-256 does not match") {
 		t.Fatalf("checksum error = %v", err)
 	}
 	if _, err := os.Stat(marker); !os.IsNotExist(err) {

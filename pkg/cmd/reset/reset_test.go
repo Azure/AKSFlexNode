@@ -24,12 +24,9 @@ type resetRuntime struct {
 	fail   string
 }
 
-func (r resetRuntime) PlanReset(*slog.Logger) (agentruntime.ResetPlan, error) {
+func (r resetRuntime) PlanReset(*slog.Logger) agentruntime.ResetPlan {
 	*r.events = append(*r.events, "discover")
-	if r.fail == "discover" {
-		return nil, errors.New("discovery failed")
-	}
-	return r, nil
+	return r
 }
 
 func (resetRuntime) HasHostNativeState() bool { return true }
@@ -67,7 +64,6 @@ func TestResetIgnoresAppliedStateAndRetainsConfigOnFailure(t *testing.T) {
 		{name: "corrupt", state: "not json"},
 		{name: "stale", state: `{"isolation":"nspawn","activeMachine":"kube1"}`},
 		{name: "uninstall failure", state: "corrupt", fail: "uninstall"},
-		{name: "discovery failure", state: "corrupt", fail: "discover"},
 		{name: "stop failure", state: "corrupt", fail: "stop"},
 		{name: "Hub failure", state: "corrupt", fail: "hub"},
 		{name: "cleanup failure", state: "corrupt", fail: "worker"},
@@ -122,7 +118,7 @@ func TestResetIgnoresAppliedStateAndRetainsConfigOnFailure(t *testing.T) {
 			}
 			want := []string{"uninstall", "discover", "stop", "hub", "worker", "clear"}
 			if tc.fail != "" {
-				failedAt := map[string]int{"uninstall": 1, "discover": 2, "stop": 3, "hub": 4, "worker": 5}
+				failedAt := map[string]int{"uninstall": 1, "stop": 3, "hub": 4, "worker": 5}
 				want = want[:failedAt[tc.fail]]
 				if contents, err := os.ReadFile(state); err != nil || string(contents) != tc.state {
 					t.Fatalf("state not retained: %q, %v", contents, err)
