@@ -167,16 +167,22 @@ func TestHostUpgradeRefusesCandidateBeforeSwitch(t *testing.T) {
 			helper := filepath.Join(t.TempDir(), "helper")
 			writeExecutable(t, helper, "unchanged")
 			executor := &HostUpgrade{
-				log:         discardLogger(),
-				paths:       paths,
-				mode:        tc.mode,
-				signals:     NewUpgradeSignalStore(paths.SignalPath),
-				helperPaths: map[string]string{"kube1": helper},
+				log:     discardLogger(),
+				paths:   paths,
+				mode:    tc.mode,
+				signals: NewUpgradeSignalStore(paths.SignalPath),
+				helperPaths: map[string]string{
+					"kube1": helper,
+				},
 			}
 			if err := executor.signals.RecordPending("upgrade", "kube1", "initiator"); err != nil {
 				t.Fatal(err)
 			}
-			request := UpgradeRequest{DownloadURL: server.URL + "?sig=url-secret", SHA256: expectedDigest}
+			request := UpgradeRequest{
+				DownloadURL: server.URL + "?sig=url-secret",
+				SHA256:      expectedDigest,
+			}
+
 			stageErr := executor.Stage(t.Context(), request)
 			if stageErr == nil || !strings.Contains(stageErr.Error(), tc.wantErr) {
 				t.Fatalf("Stage error = %v, want %q", stageErr, tc.wantErr)
