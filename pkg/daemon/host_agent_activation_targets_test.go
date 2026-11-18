@@ -402,7 +402,7 @@ func TestActivationConstructorUsesCanonicalPaths(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	service, _, err := newFlexDaemonActivationService(discardLogger(), func() string { return root }, "/unused/candidate")
+	service, _, err := newFlexDaemonActivationService(discardLogger(), root, func() string { return root }, "/unused/candidate")
 	if err != nil {
 		t.Fatal(err)
 	}

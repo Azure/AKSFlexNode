@@ -22,13 +22,14 @@ func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candida
 		return agentbinary.ActivationPlan{}, agentdeployment.ErrDirectActivationInContainer
 	}
 
-	candidate, cleanup, err := agentdeployment.SnapshotCandidate(candidatePath)
+	root := agentdeployment.PlannedHostRoot()
+	candidate, cleanup, err := agentdeployment.SnapshotCandidate(candidatePath, root)
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
 	defer cleanup()
 
-	service, paths, err := newFlexDaemonActivationService(log, agentdeployment.PlannedHostRoot, candidate)
+	service, paths, err := newFlexDaemonActivationService(log, root, agentdeployment.PlannedHostRoot, candidate)
 	if err != nil {
 		return agentbinary.ActivationPlan{}, err
 	}
@@ -53,13 +54,14 @@ func ActivateHostAgent(ctx context.Context, log *slog.Logger, candidatePath stri
 	if err := agentdeployment.GuardActivationLegacySeed(ctx, log); err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
-	candidate, cleanup, err := agentdeployment.SnapshotCandidate(candidatePath)
+	root := hostroot.Resolve()
+	candidate, cleanup, err := agentdeployment.SnapshotCandidate(candidatePath, root)
 	if err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
 	defer cleanup()
 
-	service, paths, err := newFlexDaemonActivationService(log, hostroot.Resolve, candidate)
+	service, paths, err := newFlexDaemonActivationService(log, root, hostroot.Resolve, candidate)
 	if err != nil {
 		return agentbinary.ActivationResult{}, err
 	}
@@ -85,8 +87,7 @@ type flexDaemonActivationService struct {
 	synchronize   func(string, string) error
 }
 
-func newFlexDaemonActivationService(log *slog.Logger, resolveRoot func() string, candidatePath string) (*flexDaemonActivationService, agentdeployment.UpgradePaths, error) {
-	root := resolveRoot()
+func newFlexDaemonActivationService(log *slog.Logger, root string, resolveRoot func() string, candidatePath string) (*flexDaemonActivationService, agentdeployment.UpgradePaths, error) {
 	state, err := NewFileStateStore()
 	if err != nil {
 		return nil, agentdeployment.UpgradePaths{}, err
