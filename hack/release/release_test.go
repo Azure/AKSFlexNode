@@ -39,11 +39,13 @@ func validationScript(t *testing.T) string {
 	if err := yaml.Unmarshal(data, &workflow); err != nil {
 		t.Fatalf("parse release workflow: %v", err)
 	}
+
 	for _, step := range workflow.Jobs.Prepare.Steps {
 		if step.ID == "release" && step.Run != "" {
 			return step.Run
 		}
 	}
+
 	t.Fatal("release validation step not found")
 	return ""
 }
@@ -277,6 +279,7 @@ esac
 			if ctx.Err() != nil {
 				t.Fatalf("validation timed out: %v\n%s", ctx.Err(), output)
 			}
+
 			if tc.wantError != "" {
 				if err == nil || !strings.Contains(string(output), tc.wantError) {
 					t.Fatalf("validation error = %v, output = %s; want %q", err, output, tc.wantError)
