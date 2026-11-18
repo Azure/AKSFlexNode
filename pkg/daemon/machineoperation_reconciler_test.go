@@ -15,6 +15,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
@@ -71,7 +72,7 @@ func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 		).Build(),
 		Log:                  slog.Default(),
 		MachineOperationMode: machineOperationModeDisable,
-		Operator:             &fakeNodeOperator{},
+		Runtime:              &fakeWorkerRuntime{},
 		AgentUpgrade:         &fakeAgentUpgradeExecutor{},
 	})
 	if err != nil {
@@ -91,15 +92,15 @@ func TestMachineOperationReconcilerRequiresDependencies(t *testing.T) {
 	}{
 		"missing logger": {
 			opts: machineOperationReconcilerOptions{
-				Client:   fake.NewClientBuilder().Build(),
-				Operator: &fakeNodeOperator{},
+				Client:  fake.NewClientBuilder().Build(),
+				Runtime: &fakeWorkerRuntime{},
 			},
 			wantErr: "logger is nil",
 		},
 		"missing client": {
 			opts: machineOperationReconcilerOptions{
-				Log:      slog.Default(),
-				Operator: &fakeNodeOperator{},
+				Log:     slog.Default(),
+				Runtime: &fakeWorkerRuntime{},
 			},
 			wantErr: "kubernetes client is nil",
 		},
@@ -109,13 +110,13 @@ func TestMachineOperationReconcilerRequiresDependencies(t *testing.T) {
 				Log:          slog.Default(),
 				AgentUpgrade: &fakeAgentUpgradeExecutor{},
 			},
-			wantErr: "node operator is nil",
+			wantErr: "worker runtime is nil",
 		},
 		"missing agent upgrade executor": {
 			opts: machineOperationReconcilerOptions{
-				Client:   fake.NewClientBuilder().Build(),
-				Log:      slog.Default(),
-				Operator: &fakeNodeOperator{},
+				Client:  fake.NewClientBuilder().Build(),
+				Log:     slog.Default(),
+				Runtime: &fakeWorkerRuntime{},
 			},
 			wantErr: "agent upgrade executor is nil",
 		},
@@ -165,7 +166,7 @@ func TestMachineOperationReconcilerEnabledRequiresNames(t *testing.T) {
 				Log:            slog.Default(),
 				NodeName:       tt.nodeName,
 				AKSMachineName: tt.aksMachineName,
-				Operator:       &fakeNodeOperator{},
+				Runtime:        &fakeWorkerRuntime{},
 				AgentUpgrade:   &fakeAgentUpgradeExecutor{},
 			})
 			if err == nil {
@@ -220,12 +221,24 @@ func (m errorRESTMapper) ResourceSingularizer(string) (string, error) {
 	return "", m.err
 }
 
+func newTestMachineOperationHandlers(worker *fakeWorkerRuntime) *machineOperationHandlers {
+	return &machineOperationHandlers{
+		log:         slog.Default(),
+		runtime:     worker,
+		state:       worker,
+		cfg:         &config.Config{},
+		resolve:     fakeResolveMachine,
+		uninstall:   worker.uninstall,
+		clearConfig: testTask{name: "remove-runtime-dirs"},
+	}
+}
+
 func TestMachineOperationHandlersNodeReboot(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}}
+	operator := &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
+	target := newTestMachineOperationHandlers(operator)
 
 	if _, err := target.reconcileNodeReboot(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationNodeReboot}); err != nil {
 		t.Fatalf("reconcileNodeReboot: %v", err)
@@ -244,9 +257,9 @@ func TestMachineOperationHandlersNodeReboot(t *testing.T) {
 func TestMachineOperationHandlersNodeRebootFailure(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeNodeOperator{restartErr: errors.New("restart failed")}
+	operator := &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}, restartErr: errors.New("restart failed")}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
+	target := newTestMachineOperationHandlers(operator)
 
 	if _, err := target.reconcileNodeReboot(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationNodeReboot}); err != nil {
 		t.Fatalf("reconcileNodeReboot: %v", err)
@@ -266,7 +279,7 @@ func TestMachineOperationHandlersNodeRebootStoreFailure(t *testing.T) {
 	t.Parallel()
 
 	store := &fakeMachineOperationStore{markErr: errors.New("mark failed")}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}}
 
 	_, err := target.reconcileNodeReboot(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationNodeReboot})
 	if err == nil {
@@ -281,7 +294,7 @@ func TestMachineOperationHandlersUnsupportedOperation(t *testing.T) {
 	t.Parallel()
 
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}}
 
 	if _, err := target.unsupportedOperation(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationAgentReset}); err != nil {
 		t.Fatalf("unsupportedOperation: %v", err)
@@ -299,7 +312,7 @@ func TestMachineOperationHandlersAgentUpgrade(t *testing.T) {
 
 	upgrader := &fakeAgentUpgradeExecutor{}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	digest := strings.Repeat("a", 64)
 	op := daemon.MachineOperation{
 		Name: "upgrade-1",
@@ -370,7 +383,7 @@ func TestMachineOperationHandlersAgentUpgradeInvalidParameters(t *testing.T) {
 				validateErr: tt.validateErr,
 			}
 			store := &fakeMachineOperationStore{}
-			target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+			target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 			op := daemon.MachineOperation{Name: "upgrade-1", Kind: machinav1alpha3.OperationAgentUpgrade, Parameters: tt.parameters}
 
 			for range 2 {
@@ -396,7 +409,7 @@ func TestMachineOperationHandlersAgentUpgradeDuplicateReconcileIsNoop(t *testing
 
 	upgrader := &fakeAgentUpgradeExecutor{pendingErr: errAgentUpgradeAlreadyPending}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
 		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
@@ -418,7 +431,7 @@ func TestMachineOperationHandlersAgentUpgradeRequeuesWhenDirectActivationHoldsLo
 
 	upgrader := &fakeAgentUpgradeExecutor{acquireErr: agentbinary.ErrActivationInProgress}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
 		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
@@ -440,7 +453,7 @@ func TestMachineOperationHandlersAgentUpgradeMarkFailureClearsPendingSignal(t *t
 
 	upgrader := &fakeAgentUpgradeExecutor{}
 	store := &fakeMachineOperationStore{markErr: errors.New("status update failed")}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
 		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
@@ -463,7 +476,7 @@ func TestMachineOperationHandlersAgentUpgradeStageFailureRollsBack(t *testing.T)
 
 	upgrader := &fakeAgentUpgradeExecutor{stageErr: errors.New("bad archive")}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
 		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
@@ -488,7 +501,7 @@ func TestMachineOperationHandlersAgentUpgradeAbortFailureStartsRecovery(t *testi
 		abortErr: errors.New("rollback failed"),
 	}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
 		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
@@ -513,7 +526,7 @@ func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *t
 		abortErr:   errors.New("rollback failed"),
 		restartErr: errors.New("restart failed"),
 	}
-	target := &machineOperationHandlers{log: slog.Default(), operator: &fakeNodeOperator{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentUpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
 		agentUpgradeSHA256Parameter:      strings.Repeat("a", 64),
@@ -538,9 +551,9 @@ func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *t
 func TestMachineOperationHandlersAgentReset(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}}
+	operator := &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
+	target := newTestMachineOperationHandlers(operator)
 
 	if _, err := target.reconcileAgentReset(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationAgentReset}); err != nil {
 		t.Fatalf("reconcileAgentReset: %v", err)
@@ -565,9 +578,9 @@ func TestMachineOperationHandlersAgentReset(t *testing.T) {
 func TestMachineOperationHandlersAgentResetFailure(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeNodeOperator{resetErr: errors.New("reset failed")}
+	operator := &fakeWorkerRuntime{resetErr: errors.New("reset failed")}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
+	target := newTestMachineOperationHandlers(operator)
 
 	if _, err := target.reconcileAgentReset(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationAgentReset}); err != nil {
 		t.Fatalf("reconcileAgentReset: %v", err)
@@ -583,9 +596,9 @@ func TestMachineOperationHandlersAgentResetFailure(t *testing.T) {
 func TestMachineOperationHandlersAgentResetStopFailure(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeNodeOperator{stopErr: errors.New("stop failed")}
+	operator := &fakeWorkerRuntime{stopErr: errors.New("stop failed")}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), operator: operator}
+	target := newTestMachineOperationHandlers(operator)
 
 	_, err := target.reconcileAgentReset(t.Context(), store, daemon.MachineOperation{Name: "op1", Kind: machinav1alpha3.OperationAgentReset})
 	if err == nil {
@@ -728,14 +741,19 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 					Build()
 			}
 			cache, apiServer := withOperation(tc.cached), withOperation(tc.apiServer)
-			operator := &fakeNodeOperator{}
+			operator := &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}}
 			reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
 				Client:         cache,
 				Reader:         apiServer,
 				Log:            discardLogger(),
 				NodeName:       "node1",
 				AKSMachineName: "machine1",
-				Operator:       operator,
+				Runtime:        operator,
+				State:          operator,
+				Config:         &config.Config{},
+				Resolve:        fakeResolveMachine,
+				Uninstall:      operator.uninstall,
+				ClearConfig:    testTask{name: "remove-runtime-dirs"},
 				AgentUpgrade:   &fakeAgentUpgradeExecutor{},
 			})
 			if err != nil {

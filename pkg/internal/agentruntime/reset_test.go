@@ -1,4 +1,4 @@
-package daemon
+package agentruntime
 
 import (
 	"errors"
@@ -19,7 +19,7 @@ import (
 func TestResetNodeCleansUpLocalDNS(t *testing.T) {
 	t.Parallel()
 
-	name := ResetNode(slog.New(slog.DiscardHandler)).Name()
+	name := (NSpawn{}).Reset(slog.New(slog.DiscardHandler)).Name()
 
 	for _, want := range []string{
 		"cleanup-localdns-rules",
@@ -86,10 +86,15 @@ func TestRemoveFilesTaskIsIdempotent(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	dangling := filepath.Join(dir, "dangling")
+	if err := os.Symlink(filepath.Join(dir, "missing-target"), dangling); err != nil {
+		t.Fatal(err)
+	}
+
 	task := &removeFilesTask{
 		name:  "test",
 		log:   slog.New(slog.DiscardHandler),
-		paths: []string{present, filepath.Join(dir, "absent")},
+		paths: []string{present, dangling, filepath.Join(dir, "absent")},
 	}
 
 	for pass := 1; pass <= 2; pass++ {
@@ -97,7 +102,9 @@ func TestRemoveFilesTaskIsIdempotent(t *testing.T) {
 			t.Fatalf("pass %d: %v", pass, err)
 		}
 	}
-	if _, err := os.Lstat(present); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("file was not removed: %v", err)
+	for _, path := range []string{present, dangling} {
+		if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("file %s was not removed: %v", path, err)
+		}
 	}
 }

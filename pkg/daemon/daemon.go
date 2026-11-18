@@ -22,6 +22,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/kubeauth"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
@@ -77,15 +78,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	operator, err := newNSpawnNodeOperator(cfg, store)
-	if err != nil {
-		return err
-	}
+	runtime := agentruntime.NSpawn{}
 	// In its container, the agent's units and its binary in the active machine converge here,
 	// before the daemon builds its clients, as a host's install does above: a daemon whose
 	// credentials fail still leaves them as its image has them.
 	if containerized {
-		convergence := newContainerAgentConvergence(log, operator)
+		convergence := newContainerAgentConvergence(log, store)
 		held, err := convergence.converge(ctx)
 		if err != nil {
 			return err
@@ -131,9 +129,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 	var upgrades agentUpgrader
 	if containerized {
-		upgrades, err = newContainerAgentUpgradeExecutor(log, operator)
+		upgrades, err = newContainerAgentUpgradeExecutor(log, store)
 	} else {
-		upgrades, err = newHostAgentUpgradeExecutor(log, operator)
+		upgrades, err = newHostAgentUpgradeExecutor(log, store)
 	}
 	if err != nil {
 		return err
@@ -154,7 +152,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		Log:                      log,
 		Machines:                 machines,
 		Client:                   mgr.GetClient(),
-		Operator:                 operator,
+		Runtime:                  runtime,
+		State:                    store,
+		Config:                   cfg,
+		Refresher:                bootstrapDataRefresherForConfig(cfg),
+		HookUnits:                EnsureNSpawnLifecycleUnits,
+		Uninstall:                UninstallService,
+		ClearConfig:              config.RemoveRuntimeDirs(log),
 		NodeName:                 nodeName,
 		MachineReconcileInterval: time.Duration(cfg.Agent.MachineReconcileInterval),
 		Hub:                      hub,
@@ -169,7 +173,12 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		NodeName:             nodeName,
 		AKSMachineName:       aksMachineName,
 		MachineOperationMode: cfg.Agent.MachineOperationMode,
-		Operator:             repaves.operator,
+		Runtime:              runtime,
+		State:                store,
+		Config:               cfg,
+		Uninstall:            UninstallService,
+		ClearConfig:          config.RemoveRuntimeDirs(log),
+		Resolve:              config.ResolveMachineGoalState,
 		AgentUpgrade:         upgrades,
 	})
 	if err != nil {

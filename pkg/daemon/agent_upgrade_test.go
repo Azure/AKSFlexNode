@@ -107,7 +107,7 @@ func TestHostAgentUpgradeExecutorRecordPendingIsIdempotent(t *testing.T) {
 
 	path := filepath.Join(t.TempDir(), "agent-upgrade.json")
 	executor := &hostAgentUpgradeExecutor{
-		state:   &fakeNodeOperator{state: &State{ActiveMachine: "kube1"}},
+		state:   &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}},
 		signals: agentUpgradeSignalStore{path: path},
 	}
 	if err := executor.RecordPending(t.Context(), "operation-1"); err != nil {

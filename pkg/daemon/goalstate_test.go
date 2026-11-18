@@ -48,7 +48,7 @@ func TestFindActiveMachine(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			got, err := (&nspawnNodeOperator{state: &testStateStore{state: tt.state}}).findActiveMachine(t.Context())
+			got, err := activeMachineFromStore(t.Context(), &testStateStore{state: tt.state})
 			if tt.wantErr {
 				if err == nil {
 					t.Fatal("findActiveMachine error = nil, want error")
@@ -84,11 +84,10 @@ func TestConfigForGoalStateRefreshesBootstrapData(t *testing.T) {
 		ClusterFQDN:    "new.example.test",
 		CACertData:     "bmV3",
 	}}
-	operator := &nspawnNodeOperator{cfg: cfg, bootstrapDataRefresher: refresher}
 	var logs bytes.Buffer
 	log := slog.New(slog.NewTextHandler(&logs, nil))
 
-	got, err := operator.configForGoalState(t.Context(), log, aksmachine.GoalState{KubernetesVersion: "1.36.2"})
+	got, err := configForGoalState(t.Context(), log, cfg, refresher, aksmachine.GoalState{KubernetesVersion: "1.36.2"})
 	if err != nil {
 		t.Fatalf("configForGoalState() error = %v", err)
 	}
@@ -144,8 +143,7 @@ func TestConfigForGoalStateSkipsBootstrapDataRefreshWithoutBothAuthTypes(t *test
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			refresher := bootstrapDataRefresherForConfig(cfg)
-			operator := &nspawnNodeOperator{cfg: cfg, bootstrapDataRefresher: refresher}
-			if _, err := operator.configForGoalState(t.Context(), discardLogger(), aksmachine.GoalState{}); err != nil {
+			if _, err := configForGoalState(t.Context(), discardLogger(), cfg, refresher, aksmachine.GoalState{}); err != nil {
 				t.Fatalf("configForGoalState() error = %v", err)
 			}
 			if _, ok := refresher.(noopBootstrapDataRefresher); !ok {
@@ -175,12 +173,9 @@ func TestConfigForGoalStateBootstrapDataRefreshFailure(t *testing.T) {
 		BootstrapToken:  &config.BootstrapTokenConfig{Token: "oldtok.0123456789abcdef"},
 		ManagedIdentity: &config.ManagedIdentityConfig{},
 	}}
-	operator := &nspawnNodeOperator{
-		cfg:                    cfg,
-		bootstrapDataRefresher: &fakeBootstrapDataRefresher{err: errors.New("ARM unavailable")},
-	}
-	_, err := operator.configForGoalState(t.Context(), discardLogger(), aksmachine.GoalState{})
-	if err == nil || !errors.Is(err, operator.bootstrapDataRefresher.(*fakeBootstrapDataRefresher).err) {
+	refresher := &fakeBootstrapDataRefresher{err: errors.New("ARM unavailable")}
+	_, err := configForGoalState(t.Context(), discardLogger(), cfg, refresher, aksmachine.GoalState{})
+	if err == nil || !errors.Is(err, refresher.err) {
 		t.Fatalf("configForGoalState() error = %v", err)
 	}
 	if cfg.Azure.BootstrapToken.Token != "oldtok.0123456789abcdef" {

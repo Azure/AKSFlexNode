@@ -548,7 +548,7 @@ func (c *containerAgentConvergence) converge(ctx context.Context) (bool, error) 
 	}
 	c.removeImages(ctx)
 
-	state, err := c.state.LoadState(ctx)
+	state, err := c.state.Load(ctx)
 	if err != nil {
 		return held, fmt.Errorf("load daemon state: %w", err)
 	}

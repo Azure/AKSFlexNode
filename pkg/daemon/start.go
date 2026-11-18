@@ -5,13 +5,8 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
-	"github.com/Azure/AKSFlexNode/pkg/npd"
-	"github.com/Azure/unbounded/pkg/agent/goalstates"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
-	"github.com/Azure/unbounded/pkg/agent/phases/nodestart"
-	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 func SetupHost(cfg *config.Config, log *slog.Logger) phases.Task {
@@ -34,38 +29,4 @@ func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.
 		hostrouting.Configure(cfg, log),
 	))
 	return phases.Serial(log, tasks...)
-}
-
-func stageContainerImageArchiveBindSource(log *slog.Logger, staging *goalstates.ContainerImageArchiveStaging) phases.Task {
-	// TODO: move this responsibility back into Unbounded. Its nspawn template
-	// owns the unconditional container-image archive bind mount, so Unbounded
-	// should also ensure the host-side bind source exists for online and offline
-	// bootstrap paths.
-	return rootfs.DownloadContainerImageArchives(log, staging)
-}
-
-func StartNode(
-	cfg *config.Config,
-	log *slog.Logger,
-	machineName string,
-	gs *goalstates.MachineGoalState,
-	containerImageArchives *goalstates.ContainerImageArchiveStaging,
-	store stateStore,
-	state *State,
-) phases.Task {
-	return phases.Serial(log,
-		// Before anything starts the machine: its hooks start these units.
-		EnsureNSpawnLifecycleUnits(log),
-		stageContainerImageArchiveBindSource(log, containerImageArchives),
-		rootfs.Provision(log, gs.RootFS),
-		ConfigureNSpawnDependencies(log, gs.RootFS, cfg.Bootstrap.AdditionalRequiredServices),
-		phases.Parallel(log,
-			npd.Download(log, cfg, gs.RootFS.Root()),
-			InstallBinary(gs.RootFS.Root()),
-		),
-		nodestart.StartNode(log, gs.NodeStart),
-		nodestart.WaitForKubelet(log, machineName),
-		npd.Start(log, cfg, gs.RootFS.Root(), gs.NodeStart, isolation.ModeNSpawn),
-		saveState(store, state),
-	)
 }
