@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -106,13 +107,116 @@ func (snapshotActivationService) Reload(context.Context) error              { re
 func (snapshotActivationService) Restart(context.Context) error             { return nil }
 func (snapshotActivationService) WaitHealthy(context.Context, string) error { return nil }
 
+func TestSnapshotCandidateUsesExecutionRootInsteadOfTMPDIR(t *testing.T) {
+	executionRoot := t.TempDir()
+	tmpDir := t.TempDir()
+	original := filepath.Join(t.TempDir(), "candidate")
+	writeTestFile(t, original, "#!/bin/sh\n[ \"$1\" = supports-isolation ] && [ \"$2\" = none ]\n")
+	link := filepath.Join(t.TempDir(), "link")
+	if err := os.Symlink(original, link); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("TMPDIR", tmpDir)
+
+	candidate, cleanup, err := SnapshotCandidate(link, executionRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cleanup()
+
+	dir := filepath.Dir(candidate)
+	if filepath.Dir(dir) != executionRoot {
+		t.Fatalf("snapshot parent = %q, want %q", filepath.Dir(dir), executionRoot)
+	}
+	info, err := os.Stat(dir)
+	if err != nil || info.Mode().Perm() != 0o700 {
+		t.Fatalf("snapshot directory permissions: %v, %v", info, err)
+	}
+	info, err = os.Stat(candidate)
+	if err != nil || !info.Mode().IsRegular() || info.Mode().Perm() != 0o755 {
+		t.Fatalf("snapshot file permissions: %v, %v", info, err)
+	}
+	if err := CheckIsolation(t.Context(), candidate, isolation.ModeNone); err != nil {
+		t.Fatal(err)
+	}
+	cleanup()
+	if _, err := os.Stat(dir); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("snapshot directory survived cleanup: %v", err)
+	}
+	entries, err := os.ReadDir(tmpDir)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("TMPDIR entries = %v, error = %v", entries, err)
+	}
+}
+
+func TestSnapshotCandidateRejectsInvalidSourceAndCleansUp(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name  string
+		setup func(*testing.T, string) string
+	}{
+		{
+			name: "missing symlink target",
+			setup: func(t *testing.T, dir string) string {
+				link := filepath.Join(dir, "link")
+				if err := os.Symlink(filepath.Join(dir, "missing"), link); err != nil {
+					t.Fatal(err)
+				}
+				return link
+			},
+		},
+		{
+			name:  "directory",
+			setup: func(_ *testing.T, dir string) string { return dir },
+		},
+		{
+			name: "non-executable file",
+			setup: func(t *testing.T, dir string) string {
+				path := filepath.Join(dir, "candidate")
+				if err := os.WriteFile(path, []byte("candidate"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+		{
+			name: "candidate exceeds size limit",
+			setup: func(t *testing.T, dir string) string {
+				path := filepath.Join(dir, "candidate")
+				writeTestFile(t, path, "candidate")
+				if err := os.Truncate(path, upgradeMaxBinaryBytes+1); err != nil {
+					t.Fatal(err)
+				}
+				return path
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			root := t.TempDir()
+			path := tc.setup(t, t.TempDir())
+			_, _, err := SnapshotCandidate(path, root)
+			if err == nil {
+				t.Fatal("invalid candidate accepted")
+			}
+			entries, err := os.ReadDir(root)
+			if err != nil || len(entries) != 0 {
+				t.Fatalf("snapshot directory was not cleaned: %v, %v", entries, err)
+			}
+		})
+	}
+}
+
 func TestActivationUsesPrivateCompatibilityCandidate(t *testing.T) {
 	t.Parallel()
 
+	paths := testAgentUpgradePaths(t)
 	original := filepath.Join(t.TempDir(), "candidate")
 	const content = "#!/bin/sh\ncase \"$1\" in version) echo v1;; supports-isolation) test \"$2\" = none;; *) exit 1;; esac\n"
 	writeTestFile(t, original, content)
-	candidate, cleanup, err := SnapshotCandidate(original)
+	candidate, cleanup, err := SnapshotCandidate(original, filepath.Dir(filepath.Dir(paths.BinaryPath)))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -122,7 +226,6 @@ func TestActivationUsesPrivateCompatibilityCandidate(t *testing.T) {
 		t.Fatalf("snapshot directory permissions: %v, %v", info, err)
 	}
 
-	paths := testAgentUpgradePaths(t)
 	writeTestFile(t, paths.BinaryPath, "#!/bin/sh\necho old\n")
 	if err := ensureUpgradeLayout(t.Context(), discardLogger(), paths); err != nil {
 		t.Fatal(err)
