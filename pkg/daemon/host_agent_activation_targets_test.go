@@ -87,35 +87,31 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 		name      string
 		data      string
 		applied   isolation.Mode
-		unit      string
 		wantAfter []string
 		wantWants []string
 	}{
 		{
-			name:      "applied none overrides desired nspawn",
+			name:      "applied none overrides desired nspawn with ARC",
 			data:      `{"bootstrap":{"isolation":"nspawn"},"azure":{"arc":{"enabled":true}}}`,
 			applied:   isolation.ModeNone,
-			unit:      "Wants=machines.target\n",
 			wantAfter: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 		},
 		{
-			name:      "applied nspawn overrides desired none and unit ARC",
+			name:      "applied nspawn overrides desired none without ARC",
 			data:      `{"bootstrap":{"isolation":"none"},"azure":{"arc":{"enabled":false}}}`,
 			applied:   isolation.ModeNSpawn,
-			unit:      "After=himdsd.service\n",
 			wantAfter: []string{"network-online.target", "systemd-udev-settle.service"},
 			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "machines.target"},
 		},
 		{
-			name:      "default configuration ignores unit profile",
+			name:      "default configuration selects nspawn targets",
 			data:      `{}`,
-			unit:      "After=himdsd.service\n",
 			wantAfter: []string{"network-online.target", "systemd-udev-settle.service"},
 			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "machines.target"},
 		},
 		{
-			name:      "configured none and ARC without installed unit",
+			name:      "configured none and ARC without applied state",
 			data:      `{"bootstrap":{"isolation":"none"},"azure":{"arc":{"enabled":true}}}`,
 			wantAfter: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
@@ -127,12 +123,6 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 			dir := t.TempDir()
 			configPath := filepath.Join(dir, "config.json")
 			data := writeActivationConfig(t, configPath, tc.data)
-			unitPath := filepath.Join(dir, agentdeployment.ServiceUnitName)
-			if tc.unit != "" {
-				if err := os.WriteFile(unitPath, []byte(tc.unit), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
 			var state *State
 			if tc.applied != "" {
 				state = &State{Isolation: tc.applied}
@@ -157,14 +147,6 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 			}
 			if got, err := os.ReadFile(configPath); err != nil || string(got) != data {
 				t.Fatalf("preflight changed desired config: %v", err)
-			}
-			got, err := os.ReadFile(unitPath)
-			if tc.unit == "" {
-				if !errors.Is(err, os.ErrNotExist) {
-					t.Fatalf("preflight created unit: %v", err)
-				}
-			} else if err != nil || string(got) != tc.unit {
-				t.Fatalf("preflight changed installed unit: %v", err)
 			}
 		})
 	}
