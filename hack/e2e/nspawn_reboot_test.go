@@ -15,12 +15,30 @@ func TestNspawnRebootFingerprints(t *testing.T) {
 		failure string
 		success bool
 	}{
-		{name: "active", success: true},
-		{name: "machine stopped", failure: "machine"},
-		{name: "kubelet stopped", failure: "kubelet"},
-		{name: "containerd stopped", failure: "containerd"},
-		{name: "config missing", failure: "config"},
-		{name: "certificate missing", failure: "certificate"},
+		{
+			name:    "active",
+			success: true,
+		},
+		{
+			name:    "machine stopped",
+			failure: "machine",
+		},
+		{
+			name:    "kubelet stopped",
+			failure: "kubelet",
+		},
+		{
+			name:    "containerd stopped",
+			failure: "containerd",
+		},
+		{
+			name:    "config missing",
+			failure: "config",
+		},
+		{
+			name:    "certificate missing",
+			failure: "certificate",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

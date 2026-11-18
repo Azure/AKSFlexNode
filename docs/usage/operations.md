@@ -130,7 +130,7 @@ On Azure Container Linux, where support is experimental, see [Azure Container Li
 
 ## Managed node restart and reset
 
-When the Unbounded MachineOperation API is installed, the daemon handles `NodeReboot`, `HostSoftReboot`, and `AgentReset` operations in addition to `AgentUpgrade`. These operations target the Flex node's machine reference; they don't require a MachinaMachine custom resource.
+When the Unbounded MachineOperation API is installed, the daemon handles `NodeReboot`, `HostSoftReboot`, and `AgentReset` operations in addition to `AgentUpgrade`. These operations target the Flex node's machine reference; they don't require a Machina `Machine` custom resource.
 
 A `NodeReboot` restarts the active nspawn or OCI worker, or the native kubelet and containerd services, without rebooting the host OS. A `HostSoftReboot` requests a systemd reboot of the host OS in every supported deployment, including a containerized agent. Before the request, the agent records `InProgress` and the host boot ID in the operation status. After the agent restarts, it reports `Complete` with reason `Succeeded` if the boot ID changed, or `Failed` with reason `RebootNotObserved` if it didn't. A shutdown cancellation alone leaves the operation `InProgress` for the next start. Unfinished provider or BMC out-of-band host operations take priority; they don't wait for `HostSoftReboot`.
 

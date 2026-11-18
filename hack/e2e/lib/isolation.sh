@@ -356,7 +356,8 @@ REMOTE
 
 _host_soft_reboot() {
   local vm_ip="$1" vm_name="$2" mode="$3" label="$4"
-  local snapshot observed_mode slot credentials config uid before boot invocation started operation after new_boot new_invocation new_started status completed_at
+  local snapshot observed_mode slot credentials config uid before boot invocation started operation
+  local after new_boot new_invocation new_started status phase completed_at
   snapshot="$(_isolation_snapshot "${vm_ip}" "${mode}")"
   IFS='|' read -r observed_mode slot _ <<<"${snapshot}"
   if [[ "${observed_mode}" != "${mode}" ]]; then
@@ -389,6 +390,12 @@ EOF
   # before waiting for the restarted agent to publish its terminal result.
   local deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
   while (( SECONDS < deadline )); do
+    # A rejected reboot will never make SSH disconnect; report it without waiting for a boot.
+    if phase="$(kubectl get machineoperation "${operation}" --request-timeout=15s -o jsonpath='{.status.phase}' 2>/dev/null)" && [[ "${phase}" == Failed ]]; then
+      log_error "HostSoftReboot failed before a new host boot was observed"
+      return 1
+    fi
+
     if after="$(_host_soft_reboot_observation "${vm_ip}" 2>/dev/null)"; then
       IFS='|' read -r new_boot new_invocation new_started <<<"${after}"
       if [[ -n "${new_boot}" && "${new_boot}" != "${boot}" && "${new_invocation}" != "${invocation}" ]]; then

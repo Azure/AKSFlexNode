@@ -16,24 +16,82 @@ func TestHostSoftReboot(t *testing.T) {
 			success bool
 			want    string
 		}{
-			{name: "recovered", success: true},
-			{name: "mode-mismatch", want: "worker isolation does not match"},
-			{name: "same-boot", want: "did not produce a new host boot"},
-			{name: "same-agent", want: "did not produce a new host boot"},
-			{name: "operation-failed", want: "did not reach Complete"},
-			{name: "wrong-phase", want: "expected target boot ID"},
-			{name: "unfinished-target", want: "expected target boot ID"},
-			{name: "missing-target", want: "expected target boot ID"},
-			{name: "wrong-machine", want: "expected target boot ID"},
-			{name: "wrong-boot", want: "expected target boot ID"},
-			{name: "wrong-reason", want: "expected target boot ID"},
-			{name: "premature-complete", want: "completed before the new host boot"},
-			{name: "invalid-completion-time", want: "completed before the new host boot"},
-			{name: "slot-loss", want: "changed worker state"},
-			{name: "uid-loss", want: "changed worker state"},
-			{name: "credential-loss", want: "changed worker state"},
-			{name: "state-loss", want: "changed worker state"},
-			{name: "config-loss", want: "changed worker state"},
+			{
+				name:    "recovered",
+				success: true,
+			},
+			{
+				name: "mode-mismatch",
+				want: "worker isolation does not match",
+			},
+			{
+				name: "same-boot",
+				want: "did not produce a new host boot",
+			},
+			{
+				name: "same-agent",
+				want: "did not produce a new host boot",
+			},
+			{
+				name: "operation-failed",
+				want: "did not reach Complete",
+			},
+			{
+				name: "failed-before-reboot",
+				want: "failed before a new host boot",
+			},
+			{
+				name: "wrong-phase",
+				want: "expected target boot ID",
+			},
+			{
+				name: "unfinished-target",
+				want: "expected target boot ID",
+			},
+			{
+				name: "missing-target",
+				want: "expected target boot ID",
+			},
+			{
+				name: "wrong-machine",
+				want: "expected target boot ID",
+			},
+			{
+				name: "wrong-boot",
+				want: "expected target boot ID",
+			},
+			{
+				name: "wrong-reason",
+				want: "expected target boot ID",
+			},
+			{
+				name: "premature-complete",
+				want: "completed before the new host boot",
+			},
+			{
+				name: "invalid-completion-time",
+				want: "completed before the new host boot",
+			},
+			{
+				name: "slot-loss",
+				want: "changed worker state",
+			},
+			{
+				name: "uid-loss",
+				want: "changed worker state",
+			},
+			{
+				name: "credential-loss",
+				want: "changed worker state",
+			},
+			{
+				name: "state-loss",
+				want: "changed worker state",
+			},
+			{
+				name: "config-loss",
+				want: "changed worker state",
+			},
 		} {
 			t.Run(mode+"/"+scenario.name, func(t *testing.T) {
 				t.Parallel()
@@ -42,10 +100,11 @@ func TestHostSoftReboot(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
+				root := t.TempDir()
 				output := runShellResult(t, []string{
 					"SCRIPT=" + isolationScript(t),
 					"UPGRADE_SCRIPT=" + upgradeScript,
-					"ROOT=" + t.TempDir(),
+					"ROOT=" + root,
 					"MODE=" + mode,
 					"SCENARIO=" + scenario.name,
 				}, `
@@ -93,7 +152,7 @@ _host_soft_reboot_observation() {
     return 255
   fi
   case "$SCENARIO" in
-    same-boot) echo oldboot\|oldagent\|100 ;;
+    same-boot|failed-before-reboot) echo oldboot\|oldagent\|100 ;;
     same-agent) echo newboot\|oldagent\|200 ;;
     *) echo newboot\|newagent\|200 ;;
   esac
@@ -124,6 +183,14 @@ kubectl() {
       touch "$ROOT/waited"
       ;;
     get:machineoperation)
+      if [[ "$*" == *'jsonpath={.status.phase}'* ]]; then
+        if [[ "$SCENARIO" == failed-before-reboot ]]; then
+          echo Failed
+        else
+          echo InProgress
+        fi
+        return
+      fi
       [[ -e "$ROOT/waited" ]]
       phase=Complete
       target_phase=Complete
@@ -154,7 +221,7 @@ validate_node_joined() { [[ -e "$ROOT/waited" ]]; }
 smoke_test() { [[ -e "$ROOT/waited" && "$1" == node && "$2" == fixture-host-soft-reboot ]]; echo workload; }
 unset SECONDS
 SECONDS=0
-sleep() { SECONDS=$((SECONDS + 1)); }
+sleep() { touch "$ROOT/slept"; SECONDS=$((SECONDS + 1)); }
 E2E_NODE_JOIN_TIMEOUT=3
 E2E_AGENT_UPGRADE_TIMEOUT=3
 _host_soft_reboot vm node "$MODE" fixture
@@ -167,6 +234,13 @@ _host_soft_reboot vm node "$MODE" fixture
 				}
 				if scenario.success && !strings.Contains(output, "workload") {
 					t.Fatalf("workload did not run: %s", output)
+				}
+				if scenario.name == "failed-before-reboot" {
+					for _, name := range []string{"slept", "disconnected", "waited"} {
+						if _, err := os.Stat(filepath.Join(root, name)); !os.IsNotExist(err) {
+							t.Fatalf("continued waiting after terminal failure: %s: %v", name, err)
+						}
+					}
 				}
 			})
 		}
@@ -183,11 +257,34 @@ func TestHostSoftRebootObservation(t *testing.T) {
 		btime      string
 		success    bool
 	}{
-		{name: "active", invocation: "1234567890abcdef1234567890abcdef", boot: "boot", btime: "200", success: true},
-		{name: "missing boot", invocation: "1234567890abcdef1234567890abcdef", btime: "200"},
-		{name: "missing invocation", boot: "boot", btime: "200"},
-		{name: "zero invocation", invocation: "00000000000000000000000000000000", boot: "boot", btime: "200"},
-		{name: "missing boot time", invocation: "1234567890abcdef1234567890abcdef", boot: "boot"},
+		{
+			name:       "active",
+			invocation: "1234567890abcdef1234567890abcdef",
+			boot:       "boot",
+			btime:      "200",
+			success:    true,
+		},
+		{
+			name:       "missing boot",
+			invocation: "1234567890abcdef1234567890abcdef",
+			btime:      "200",
+		},
+		{
+			name:  "missing invocation",
+			boot:  "boot",
+			btime: "200",
+		},
+		{
+			name:       "zero invocation",
+			invocation: "00000000000000000000000000000000",
+			boot:       "boot",
+			btime:      "200",
+		},
+		{
+			name:       "missing boot time",
+			invocation: "1234567890abcdef1234567890abcdef",
+			boot:       "boot",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
