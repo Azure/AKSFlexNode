@@ -18,20 +18,6 @@ type noneRuntime struct {
 	newNode func(noneops.Params) *noneops.Node
 }
 
-// NoneHost is the host view needed for cleanup even when applied state is absent.
-func NoneHost(log *slog.Logger) WorkerContext {
-	backend := none.NewDefault(log)
-	return WorkerContext{
-		Root: none.Root{},
-		Exec: func(ctx context.Context, args ...string) (string, error) {
-			result, err := backend.Exec(ctx, nil, isolation.ExecSpec{Args: args})
-			return result.Stdout, err
-		},
-		KubeletUnit: none.UnitKubelet,
-		Mode:        isolation.ModeNone,
-	}
-}
-
 func (r noneRuntime) Worker(log *slog.Logger, input Node) (WorkerContext, error) {
 	node := r.newNode(noneops.Params{Log: log, Config: input.Config, GoalState: input.GoalState})
 	gs, err := node.GoalState()
