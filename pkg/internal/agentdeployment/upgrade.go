@@ -154,7 +154,7 @@ func (e *HostUpgrade) Stage(ctx context.Context, request UpgradeRequest) error {
 	if err := e.signals.recordCandidate(candidate); err != nil {
 		return err
 	}
-	if err := installAndSwitchBinary(ctx, e.log, request.DownloadURL, request.SHA256, e.paths); err != nil {
+	if err := installAndSwitchBinary(ctx, e.log, request.DownloadURL, request.SHA256, e.paths, e.mode); err != nil {
 		return err
 	}
 	if err := e.signals.recordSwitchCommitted(); err != nil {
