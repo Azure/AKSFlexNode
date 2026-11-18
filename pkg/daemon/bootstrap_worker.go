@@ -2,15 +2,12 @@ package daemon
 
 import (
 	"bytes"
-	"context"
 	"fmt"
-	"log/slog"
 	"maps"
 	"slices"
 	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
@@ -24,8 +21,8 @@ func ValidateAgentDeployment(mode isolation.Mode, containerized bool) error {
 	return nil
 }
 
-// ValidateWorkerBootstrap refuses an isolation switch or incompatible host before mutation.
-func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.Logger, applied *State, containerized bool) error {
+// ValidateWorkerBootstrap checks deployment compatibility and applied isolation.
+func ValidateWorkerBootstrap(cfg *config.Config, applied *State, containerized bool) error {
 	if err := ValidateAgentDeployment(cfg.Bootstrap.Isolation, containerized); err != nil {
 		return err
 	}
@@ -33,11 +30,7 @@ func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.
 		return fmt.Errorf("worker isolation change requires reset")
 	}
 
-	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
-	if err != nil {
-		return err
-	}
-	return worker.ValidateBootstrap(ctx, log, applied != nil)
+	return nil
 }
 
 // BootstrapState selects the installed worker for a none/OCI reapply.

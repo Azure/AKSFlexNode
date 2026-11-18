@@ -54,10 +54,6 @@ type bootstrapTestRuntime struct {
 	events []string
 }
 
-func (*bootstrapTestRuntime) ValidateBootstrap(context.Context, *slog.Logger, bool) error {
-	return nil
-}
-
 func (*bootstrapTestRuntime) Worker(*slog.Logger, agentruntime.Node) (agentruntime.WorkerContext, error) {
 	return agentruntime.WorkerContext{}, nil
 }
