@@ -15,7 +15,7 @@ import (
 func TestServiceTargetsFromConfig(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone} {
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer} {
 		for _, arc := range []bool{false, true} {
 			name := string(mode) + " without ARC"
 			if arc {
@@ -85,6 +85,12 @@ func TestActivationPlansExplicitTargets(t *testing.T) {
 	plan, err := service.Preflight(t.Context(), paths.CurrentPath, targets)
 	if err != nil || plan.UpdateRequired {
 		t.Fatalf("none plan = %+v, %v", plan, err)
+	}
+
+	ociTargets := ServiceTargetsFromConfig(cfg, isolation.ModeContainer)
+	plan, err = service.Preflight(t.Context(), paths.CurrentPath, ociTargets)
+	if err != nil || plan.UpdateRequired {
+		t.Fatalf("OCI plan = %+v, %v", plan, err)
 	}
 
 	targets = ServiceTargetsFromConfig(cfg, isolation.ModeNSpawn)

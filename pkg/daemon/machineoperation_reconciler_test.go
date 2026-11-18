@@ -217,10 +217,14 @@ func (m errorRESTMapper) ResourceSingularizer(string) (string, error) {
 
 func newTestMachineOperationHandlers(worker *fakeWorkerRuntime) *machineOperationHandlers {
 	return &machineOperationHandlers{
-		log:         slog.Default(),
-		runtime:     worker,
-		state:       worker,
-		cfg:         &config.Config{},
+		log:     slog.Default(),
+		runtime: worker,
+		state:   worker,
+		cfg: &config.Config{
+			Bootstrap: config.BootstrapConfig{
+				Isolation: config.DefaultIsolationMode,
+			},
+		},
 		resolve:     fakeResolveMachine,
 		uninstall:   worker.uninstall,
 		clearConfig: testTask{name: "remove-runtime-dirs"},
@@ -230,7 +234,12 @@ func newTestMachineOperationHandlers(worker *fakeWorkerRuntime) *machineOperatio
 func TestMachineOperationHandlersNodeReboot(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}}
+	operator := &fakeWorkerRuntime{
+		state: &State{
+			Isolation:     config.DefaultIsolationMode,
+			ActiveMachine: "kube1",
+		},
+	}
 	store := &fakeMachineOperationStore{}
 	target := newTestMachineOperationHandlers(operator)
 
@@ -251,7 +260,13 @@ func TestMachineOperationHandlersNodeReboot(t *testing.T) {
 func TestMachineOperationHandlersNodeRebootFailure(t *testing.T) {
 	t.Parallel()
 
-	operator := &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}, restartErr: errors.New("restart failed")}
+	operator := &fakeWorkerRuntime{
+		state: &State{
+			Isolation:     config.DefaultIsolationMode,
+			ActiveMachine: "kube1",
+		},
+		restartErr: errors.New("restart failed"),
+	}
 	store := &fakeMachineOperationStore{}
 	target := newTestMachineOperationHandlers(operator)
 
@@ -735,7 +750,12 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 					Build()
 			}
 			cache, apiServer := withOperation(tc.cached), withOperation(tc.apiServer)
-			operator := &fakeWorkerRuntime{state: &State{ActiveMachine: "kube1"}}
+			operator := &fakeWorkerRuntime{
+				state: &State{
+					Isolation:     config.DefaultIsolationMode,
+					ActiveMachine: "kube1",
+				},
+			}
 			reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
 				Client:         cache,
 				Reader:         apiServer,
@@ -744,11 +764,15 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 				AKSMachineName: "machine1",
 				Runtime:        operator,
 				State:          operator,
-				Config:         &config.Config{},
-				Resolve:        fakeResolveMachine,
-				Uninstall:      operator.uninstall,
-				ClearConfig:    testTask{name: "remove-runtime-dirs"},
-				AgentUpgrade:   &fakeAgentUpgradeExecutor{},
+				Config: &config.Config{
+					Bootstrap: config.BootstrapConfig{
+						Isolation: config.DefaultIsolationMode,
+					},
+				},
+				Resolve:      fakeResolveMachine,
+				Uninstall:    operator.uninstall,
+				ClearConfig:  testTask{name: "remove-runtime-dirs"},
+				AgentUpgrade: &fakeAgentUpgradeExecutor{},
 			})
 			if err != nil {
 				t.Fatalf("machineOperationReconciler: %v", err)

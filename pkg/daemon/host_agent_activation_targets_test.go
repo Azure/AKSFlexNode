@@ -116,6 +116,19 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 			wantAfter: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
 		},
+		{
+			name:      "applied OCI overrides desired nspawn without ARC",
+			data:      `{"bootstrap":{"isolation":"nspawn"},"azure":{"arc":{"enabled":false}}}`,
+			applied:   isolation.ModeContainer,
+			wantAfter: []string{"network-online.target", "systemd-udev-settle.service"},
+			wantWants: []string{"network-online.target", "systemd-udev-settle.service"},
+		},
+		{
+			name:      "configured OCI and ARC without applied state",
+			data:      `{"bootstrap":{"isolation":"container","experimental":{"containerIsolation":true}},"azure":{"arc":{"enabled":true}}}`,
+			wantAfter: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
+			wantWants: []string{"network-online.target", "systemd-udev-settle.service", "himdsd.service"},
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()

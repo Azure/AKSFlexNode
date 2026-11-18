@@ -22,7 +22,7 @@ import (
 func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 	t.Parallel()
 
-	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone} {
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer} {
 		t.Run(string(mode), func(t *testing.T) {
 			t.Parallel()
 
@@ -32,8 +32,8 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			marker := filepath.Join(t.TempDir(), "executed")
 			candidate := agentUpgradeProbeScript(paths, marker)
 			candidate += "if [ \"$1\" = version ]; then exit 0; fi\n"
-			if mode == isolation.ModeNone {
-				candidate += "test \"$1\" = supports-isolation && test \"$2\" = none\n"
+			if mode != isolation.ModeNSpawn {
+				candidate += fmt.Sprintf("test \"$1\" = supports-isolation && test \"$2\" = %s\n", mode)
 			} else {
 				candidate += "exit 1\n"
 			}
@@ -52,16 +52,21 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			}
 			helper := filepath.Join(t.TempDir(), "worker", "agent")
 			executor := &HostUpgrade{
-				log:         discardLogger(),
-				paths:       paths,
-				mode:        mode,
-				signals:     NewUpgradeSignalStore(paths.SignalPath),
-				helperPaths: map[string]string{slot: helper},
+				log:     discardLogger(),
+				paths:   paths,
+				mode:    mode,
+				signals: NewUpgradeSignalStore(paths.SignalPath),
+				helperPaths: map[string]string{
+					slot: helper,
+				},
 			}
 			if err := executor.signals.RecordPending("upgrade", slot, "initiator"); err != nil {
 				t.Fatal(err)
 			}
-			request := UpgradeRequest{DownloadURL: server.URL, SHA256: hex.EncodeToString(digest[:])}
+			request := UpgradeRequest{
+				DownloadURL: server.URL,
+				SHA256:      hex.EncodeToString(digest[:]),
+			}
 			if err := executor.Validate(request); err != nil {
 				t.Fatal(err)
 			}
@@ -78,11 +83,11 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
 			assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)
 			wantExecutions := fmt.Sprintf("%s|version||%s\n", paths.GreenPath, paths.BluePath)
-			if mode == isolation.ModeNone {
-				wantExecutions += fmt.Sprintf("%s|supports-isolation|none|%s\n", paths.GreenPath, paths.BluePath)
+			if mode != isolation.ModeNSpawn {
+				wantExecutions += fmt.Sprintf("%s|supports-isolation|%s|%s\n", paths.GreenPath, mode, paths.BluePath)
 			}
 			assertAgentUpgradeFileContent(t, marker, wantExecutions)
-			if mode == isolation.ModeNSpawn {
+			if mode != isolation.ModeNone {
 				assertAgentUpgradeFileContent(t, helper, candidate)
 				writeTestFile(t, helper, "stale helper")
 				if err := executor.ValidateStarted(signal); err == nil || !strings.Contains(err.Error(), "do not match") {
@@ -95,7 +100,7 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 					t.Fatalf("rollback: %v", err)
 				}
 				assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
-				if mode == isolation.ModeNSpawn {
+				if mode != isolation.ModeNone {
 					assertAgentUpgradeFileContent(t, helper, previous)
 				} else if _, err := os.Stat(filepath.Dir(helper)); !os.IsNotExist(err) {
 					t.Fatalf("none upgrade touched guest helper destination: %v", err)
@@ -111,17 +116,29 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 	}
 }
 
-func TestNoneUpgradeRefusesCandidateBeforeSwitch(t *testing.T) {
+func TestHostUpgradeRefusesCandidateBeforeSwitch(t *testing.T) {
 	t.Parallel()
 
 	for name, tc := range map[string]struct {
+		mode      isolation.Mode
 		badDigest bool
 		wantErr   string
 	}{
-		"unsupported mode": {
+		"unsupported none": {
+			mode:    isolation.ModeNone,
 			wantErr: `cannot operate isolation mode "none"`,
 		},
-		"checksum mismatch": {
+		"none checksum mismatch": {
+			mode:      isolation.ModeNone,
+			badDigest: true,
+			wantErr:   "SHA-256 does not match",
+		},
+		"unsupported OCI": {
+			mode:    isolation.ModeContainer,
+			wantErr: `cannot operate isolation mode "container"`,
+		},
+		"OCI checksum mismatch": {
+			mode:      isolation.ModeContainer,
 			badDigest: true,
 			wantErr:   "SHA-256 does not match",
 		},
@@ -152,7 +169,7 @@ func TestNoneUpgradeRefusesCandidateBeforeSwitch(t *testing.T) {
 			executor := &HostUpgrade{
 				log:     discardLogger(),
 				paths:   paths,
-				mode:    isolation.ModeNone,
+				mode:    tc.mode,
 				signals: NewUpgradeSignalStore(paths.SignalPath),
 				helperPaths: map[string]string{
 					"kube1": helper,
@@ -189,7 +206,7 @@ func TestNoneUpgradeRefusesCandidateBeforeSwitch(t *testing.T) {
 				if !errors.As(stageErr, &exitErr) || exitErr.ExitCode() != 1 {
 					t.Fatalf("Stage error = %v, want candidate exit status 1", stageErr)
 				}
-				want := fmt.Sprintf("%s|version||%s\n%s|supports-isolation|none|%s\n", paths.GreenPath, paths.BluePath, paths.GreenPath, paths.BluePath)
+				want := fmt.Sprintf("%s|version||%s\n%s|supports-isolation|%s|%s\n", paths.GreenPath, paths.BluePath, paths.GreenPath, tc.mode, paths.BluePath)
 				assertAgentUpgradeFileContent(t, marker, want)
 			}
 			if err := executor.Abort(t.Context()); err != nil {

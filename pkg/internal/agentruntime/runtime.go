@@ -8,10 +8,12 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
+	"github.com/Azure/unbounded/pkg/agent/phases/rootfs"
 )
 
 // Node contains a resolved worker configuration and placement.
@@ -43,8 +45,8 @@ type WorkerContext struct {
 // The daemon drives these transitions:
 //
 //	Bootstrap: Start -> save applied State
-//	Reapply:   Prepare(applied) -> Restart, without advancing applied State
-//	Repave:    Prepare(previous) -> agent hooks or host Hub cleanup
+//	Reapply:   Recover(applied) -> Restart, without advancing applied State
+//	Repave:    PrepareUpgrade(previous) -> agent hooks or host Hub cleanup
 //	           -> Start(target) -> save applied State -> Retire(previous)
 //	Reset:     stop workers -> host Hub cleanup if needed -> teardown -> clear configuration/State
 //
@@ -64,9 +66,14 @@ type Runtime interface {
 	// replacement, replacing kubelet identity, or advancing applied State.
 	Restart(*slog.Logger, Inputs) phases.Task
 
-	// Prepare stops and cleans nspawn before replacement. For none it runs SDK
-	// recovery against the applied config, using Previous when replacing a worker.
-	Prepare(*slog.Logger, Inputs) phases.Task
+	// PrepareUpgrade stops/cleans nspawn or recovers none SDK state before
+	// replacement. OCI preparation is handled inside the SDK upgrade itself.
+	PrepareUpgrade(*slog.Logger, Inputs) phases.Task
+
+	// Recover reconciles the applied worker before startup or reapply using the
+	// SDK's recovery support. OCI only rewrites its unit; it does not provide
+	// durable recovery for interrupted upgrades.
+	Recover(*slog.Logger, Inputs) phases.Task
 
 	// Retire removes the superseded slot or commits/prunes a none SDK upgrade.
 	// The daemon must successfully save the target as applied before invoking it.
@@ -85,6 +92,8 @@ func New(mode isolation.Mode) (Runtime, error) {
 		return NSpawn{}, nil
 	case isolation.ModeNone:
 		return noneRuntime{newNode: noneops.New}, nil
+	case isolation.ModeContainer:
+		return containerRuntime{newNode: containerops.New, stageArchives: rootfs.DownloadContainerImageArchives}, nil
 	default:
 		return nil, fmt.Errorf("unsupported worker isolation %q", mode)
 	}

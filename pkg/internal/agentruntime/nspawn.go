@@ -63,11 +63,15 @@ func (NSpawn) Restart(log *slog.Logger, input Inputs) phases.Task {
 	)
 }
 
-func (NSpawn) Prepare(log *slog.Logger, input Inputs) phases.Task {
+func (NSpawn) PrepareUpgrade(log *slog.Logger, input Inputs) phases.Task {
 	return phases.Serial(log,
 		nodestop.StopNode(log, input.Previous.Slot),
 		reset.CleanupNetwork(log),
 	)
+}
+
+func (NSpawn) Recover(log *slog.Logger, _ Inputs) phases.Task {
+	return phases.Serial(log)
 }
 
 func (NSpawn) Retire(log *slog.Logger, input Inputs) phases.Task {

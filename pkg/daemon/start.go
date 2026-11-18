@@ -6,6 +6,8 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/hostrouting"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/host"
 )
@@ -21,12 +23,27 @@ func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.
 	if !containerized {
 		tasks = append(tasks, host.InstallPackagesFor(log, cfg.Bootstrap.Isolation))
 	}
+	mode := cfg.Bootstrap.Isolation
+	if mode == isolation.ModeContainer {
+		tasks = append(tasks,
+			noneops.LoadKernelModules(log, nil),
+			phases.Parallel(log, host.DisableContainerd(log), host.DisableKubelet(log)),
+		)
+	}
+
+	nftables := host.ConfigureNFTables(log)
+	apt := host.HardenAPT(log)
+	if mode == isolation.ModeContainer {
+		nftables = host.ConfigureNFTablesFor(log, mode)
+		apt = host.RemoveAPTHardening(log)
+	}
+
 	tasks = append(tasks, phases.Parallel(log,
 		host.ConfigureOS(log),
-		host.ConfigureNFTables(log),
+		nftables,
 		host.DisableDocker(log),
 		host.DisableSwap(log),
-		host.HardenAPT(log),
+		apt,
 		hostrouting.Configure(cfg, log),
 	))
 	return phases.Serial(log, tasks...)

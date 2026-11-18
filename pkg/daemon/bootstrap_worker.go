@@ -33,9 +33,14 @@ func ValidateWorkerBootstrap(cfg *config.Config, applied *State, containerized b
 	return nil
 }
 
-// BootstrapState selects the installed worker for a host-native reapply.
+// BootstrapState selects the installed worker for a none/OCI reapply.
 // Nspawn retains its existing bootstrap behavior.
 func BootstrapState(applied, seeded *State, cfg *config.Config) (*State, bool, error) {
+	switch cfg.Bootstrap.Isolation {
+	case isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer:
+	default:
+		return nil, false, fmt.Errorf("unsupported worker isolation %q", cfg.Bootstrap.Isolation)
+	}
 	if applied == nil || cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
 		return seeded, false, nil
 	}

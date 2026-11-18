@@ -106,7 +106,11 @@ func (r noneRuntime) Restart(log *slog.Logger, input Inputs) phases.Task {
 	})
 }
 
-func (r noneRuntime) Prepare(log *slog.Logger, input Inputs) phases.Task {
+func (r noneRuntime) PrepareUpgrade(log *slog.Logger, input Inputs) phases.Task {
+	return r.Recover(log, input)
+}
+
+func (r noneRuntime) Recover(log *slog.Logger, input Inputs) phases.Task {
 	return hostnode.Func("recover-none-upgrade", func(ctx context.Context) error {
 		applied := input.Node
 		if input.Previous != nil {

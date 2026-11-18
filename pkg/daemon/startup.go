@@ -8,7 +8,108 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
+
+func prepareDaemonStartup(ctx context.Context, cfg *config.Config, log *slog.Logger, store stateStore, containerized bool) (agentruntime.Runtime, func(context.Context) error, error) {
+	applied, err := store.Load(ctx)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	if err := validateStartupState(cfg.Bootstrap.Isolation, applied); err != nil {
+		return nil, nil, err
+	}
+
+	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	convergeHeldAssets, err := prepareHostStartup(ctx, cfg, log, containerized)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := recoverStartupWorker(ctx, cfg, log, worker, applied); err != nil {
+		return nil, nil, err
+	}
+
+	// Converge container assets before building clients, even if credentials fail.
+	if containerized {
+		convergence := agentdeployment.NewContainerConvergence(log)
+		held, err := convergeContainerStartup(ctx, store, convergence)
+		if err != nil {
+			return nil, nil, err
+		}
+		if held {
+			convergeHeldAssets = convergence.WriteUnits
+		}
+	}
+
+	return worker, convergeHeldAssets, nil
+}
+
+func validateStartupState(mode isolation.Mode, applied *State) error {
+	if applied != nil && applied.Isolation != mode {
+		return fmt.Errorf("worker isolation change requires reset")
+	}
+	switch mode {
+	case isolation.ModeNSpawn:
+		return nil
+	case isolation.ModeNone, isolation.ModeContainer:
+		if applied == nil {
+			return fmt.Errorf("applied %s worker state is missing", mode)
+		}
+		return nil
+	default:
+		return fmt.Errorf("unsupported worker isolation %q", mode)
+	}
+}
+
+func prepareHostStartup(ctx context.Context, cfg *config.Config, log *slog.Logger, containerized bool) (func(context.Context) error, error) {
+	if !containerized {
+		if err := agentdeployment.MigrateHostRoot(log); err != nil {
+			return nil, err
+		}
+		if err := agentdeployment.InstallHostBinary(ctx, log); err != nil {
+			return nil, err
+		}
+	}
+
+	// Keep the last-good assets while an AgentUpgrade is pending.
+	convergeHeldAssets, err := ensureHostInstall(ctx, log, cfg, containerized)
+	if err != nil {
+		return nil, err
+	}
+	// Remove the old seed only after converging the units that could name it.
+	if !containerized {
+		if err := agentdeployment.RemoveDaemonLegacySeed(log); err != nil {
+			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
+		}
+	}
+	return convergeHeldAssets, nil
+}
+
+func recoverStartupWorker(ctx context.Context, cfg *config.Config, log *slog.Logger, worker agentruntime.Runtime, applied *State) error {
+	if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
+		return nil
+	}
+
+	input := agentruntime.Inputs{
+		Config: cfg,
+		Node: agentruntime.Node{
+			Slot:   applied.ActiveMachine,
+			Config: applied.NodeConfig,
+		},
+	}
+
+	if err := worker.Recover(log, input).Do(ctx); err != nil {
+		return fmt.Errorf("recover worker at startup: %w", err)
+	}
+
+	return nil
+}
 
 type containerStartupConvergence interface {
 	Converge(context.Context) (bool, error)

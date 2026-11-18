@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -36,16 +37,20 @@ type ResetPlan interface {
 }
 
 type resetPlan struct {
-	log    *slog.Logger
-	nspawn resetWorker
-	none   resetWorker
-	shared phases.Task
+	log       *slog.Logger
+	nspawn    resetWorker
+	none      resetWorker
+	container resetWorker
+	shared    phases.Task
 }
 
-func discoverReset(log *slog.Logger, nspawn resetWorker, native discoveredWorker, shared phases.Task) *resetPlan {
+func discoverReset(log *slog.Logger, nspawn resetWorker, native, container discoveredWorker, shared phases.Task) *resetPlan {
 	plan := &resetPlan{log: log, nspawn: nspawn, shared: shared}
 	if native.Present() {
 		plan.none = native
+	}
+	if container.Present() {
+		plan.container = container
 	}
 
 	return plan
@@ -57,12 +62,13 @@ func (NSpawn) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
 func (noneRuntime) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
 
 func planReset(log *slog.Logger) ResetPlan {
+	oci := &ociTeardown{Teardown: &containerops.Teardown{Log: log}}
 	native := &noneTeardown{
 		log: log,
 		sdk: &noneops.Teardown{Log: log},
 	}
 
-	return discoverReset(log, nspawnTeardown{log: log}, native, sharedReset(log))
+	return discoverReset(log, nspawnTeardown{log: log}, native, oci, sharedReset(log))
 }
 
 func sharedReset(log *slog.Logger) phases.Task {
@@ -84,6 +90,9 @@ func (p *resetPlan) Stop() phases.Task {
 	if p.none != nil {
 		tasks = append(tasks, p.none.Stop())
 	}
+	if p.container != nil {
+		tasks = append(tasks, p.container.Stop())
+	}
 	return phases.Serial(p.log, tasks...)
 }
 
@@ -91,6 +100,9 @@ func (p *resetPlan) Finish() phases.Task {
 	tasks := []phases.Task{p.nspawn.Destroy()}
 	if p.none != nil {
 		tasks = append(tasks, p.none.Destroy())
+	}
+	if p.container != nil {
+		tasks = append(tasks, p.container.Destroy())
 	}
 	tasks = append(tasks, p.shared)
 	return phases.Serial(p.log, tasks...)

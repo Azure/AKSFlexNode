@@ -134,7 +134,7 @@ func runStart(ctx context.Context, cfg *config.Config) error {
 		input.Node.Config = resolved.AgentConfig
 		input.Node.GoalState = resolved.GoalState
 		input.Archives = resolved.ContainerImageArchives
-		if cfg.Bootstrap.Isolation == isolation.ModeNone {
+		if cfg.Bootstrap.Isolation == isolation.ModeNone || cfg.Bootstrap.Isolation == isolation.ModeContainer {
 			state.NodeConfig = resolved.AgentConfig.DeepCopy()
 		}
 	}
@@ -195,7 +195,7 @@ func registerBootstrap(ctx context.Context, log *slog.Logger, cfg *config.Config
 
 func workerBootstrapTasks(log *slog.Logger, worker agentruntime.Runtime, input agentruntime.Inputs, reapply bool, save phases.Task) []phases.Task {
 	if reapply {
-		return []phases.Task{worker.Prepare(log, input), worker.Restart(log, input)}
+		return []phases.Task{worker.Recover(log, input), worker.Restart(log, input)}
 	}
 
 	return []phases.Task{worker.Start(log, input), save}
@@ -205,7 +205,7 @@ func bootstrapTasks(cfg *config.Config, log *slog.Logger, worker agentruntime.Ru
 	var tasks []phases.Task
 	if !reapply {
 		tasks = append(tasks, daemon.SetupHost(cfg, log))
-		if cfg.Bootstrap.Isolation != isolation.ModeNone {
+		if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
 			tasks = append(tasks, agentdeployment.EnsureNSpawnLifecycleUnits(log))
 		}
 	}

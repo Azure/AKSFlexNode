@@ -21,10 +21,8 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
-	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
-	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 const (
@@ -48,73 +46,9 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
-	applied, err := store.Load(ctx)
+	worker, convergeHeldAssets, err := prepareDaemonStartup(ctx, cfg, log, store, containerized)
 	if err != nil {
 		return err
-	}
-	if applied != nil && applied.Isolation != cfg.Bootstrap.Isolation {
-		return fmt.Errorf("worker isolation change requires reset")
-	}
-	if cfg.Bootstrap.Isolation == isolation.ModeNone && applied == nil {
-		return fmt.Errorf("applied none worker state is missing")
-	}
-	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
-	if err != nil {
-		return err
-	}
-
-	// After an AgentUpgrade from a release that predates the host root, this is
-	// the first time the new agent runs on the host.
-	if !containerized {
-		if err := agentdeployment.MigrateHostRoot(log); err != nil {
-			return err
-		}
-	}
-
-	// Existing direct-file installations may predate the recovery units. Keep
-	// the binary layout and systemd rollback assets converged on every startup,
-	// except while an AgentUpgrade is pending; see agentdeployment.EnsureDaemonServiceAssets.
-	if !containerized {
-		if err := agentdeployment.InstallHostBinary(ctx, log); err != nil {
-			return err
-		}
-	}
-	convergeHeldAssets, err := ensureHostInstall(ctx, log, cfg, containerized)
-	if err != nil {
-		return err
-	}
-	// After the units are converged, so nothing names the copy it removes. While
-	// an AgentUpgrade is pending they are the last-good version's, which name it
-	// only on a host not yet moved off /usr/local, where nothing is removed.
-	if !containerized {
-		if err := agentdeployment.RemoveDaemonLegacySeed(log); err != nil {
-			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
-		}
-	}
-	if cfg.Bootstrap.Isolation == isolation.ModeNone {
-		input := agentruntime.Inputs{
-			Config: cfg,
-			Node: agentruntime.Node{
-				Slot:   applied.ActiveMachine,
-				Config: applied.NodeConfig,
-			},
-		}
-		if err := worker.Prepare(log, input).Do(ctx); err != nil {
-			return fmt.Errorf("recover worker at startup: %w", err)
-		}
-	}
-	// In its container, the agent's units and its binary in the active machine converge here,
-	// before the daemon builds its clients, as a host's install does above: a daemon whose
-	// credentials fail still leaves them as its image has them.
-	if containerized {
-		convergence := agentdeployment.NewContainerConvergence(log)
-		held, err := convergeContainerStartup(ctx, store, convergence)
-		if err != nil {
-			return err
-		}
-		if held {
-			convergeHeldAssets = convergence.WriteUnits
-		}
 	}
 	if cfg.UsesKubeconfigCredentials() {
 		if err := retireDaemonCredentials(); err != nil {

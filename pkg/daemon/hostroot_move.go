@@ -164,6 +164,20 @@ func rewriteHostRootUnits(ctx context.Context, log *slog.Logger, cfg *config.Con
 	if err != nil {
 		return err
 	}
+	if active.State.Isolation == isolation.ModeContainer {
+		node := agentruntime.Node{
+			Slot:   active.Name,
+			Config: active.State.NodeConfig,
+		}
+		if err := agentruntime.RewriteContainerHostRoot(ctx, log, node); err != nil {
+			return err
+		}
+		return agentdeployment.SyncDirs(
+			agentdeployment.SystemdSystemDir,
+			filepath.Dir(agentdeployment.RecoveryScriptPathUnder(hostroot.Resolve())),
+			filepath.Dir(goalstates.ResolveHostPaths().LocalDNSNetworkHelper),
+		)
+	}
 	if active.State.Isolation == isolation.ModeNone {
 		if err := utilexec.ReloadSystemd(ctx, log); err != nil {
 			return fmt.Errorf("reload systemd after moving to the host root: %w", err)
