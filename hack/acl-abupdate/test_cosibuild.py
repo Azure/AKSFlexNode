@@ -134,9 +134,10 @@ class ConfigTest(unittest.TestCase):
         config = cosibuild.ic_config(self.FILES, None, ("3.0.20261104", "3.0.20261104-hello.1"))
         scripts = config["scripts"]["postCustomization"]
         self.assertEqual([script["name"] for script in scripts], ["set-os-version", "label-etc-files"])
-        self.assertEqual(subprocess.run(["sh", "-n"], input=scripts[0]["content"], text=True, check=False).returncode, 0)
-        self.assertEqual(cosibuild.ic_config([], "/config/mine.yaml", ("1.0.0", "1.0.0-x.1"))["scripts"]["postCustomization"][0]["name"],
-                         "set-os-version")
+        checked = subprocess.run(["sh", "-n"], input=scripts[0]["content"], text=True, check=False)
+        self.assertEqual(checked.returncode, 0)
+        only = cosibuild.ic_config([], "/config/mine.yaml", ("1.0.0", "1.0.0-x.1"))["scripts"]["postCustomization"]
+        self.assertEqual([script["name"] for script in only], ["set-os-version"])
 
     def test_os_version_script(self) -> None:
         release = ('NAME="Microsoft Azure Container Linux"\nVERSION=3.0.20261104\nVERSION_ID=3.0.20261104\n'
@@ -171,7 +172,8 @@ class ConfigTest(unittest.TestCase):
             (Path(root) / "etc").mkdir()
             etc = Path(root) / "etc/os-release"
             etc.write_text("VERSION_ID=9.9.9\n")
-            script = cosibuild.os_version_script("3.0.20261104", "3.0.20261104-hello.1").replace("/etc/os-release", str(etc))
+            script = cosibuild.os_version_script("3.0.20261104", "3.0.20261104-hello.1")
+            script = script.replace("/etc/os-release", str(etc))
             self.assertNotEqual(subprocess.run(["sh", "-c", script], capture_output=True, check=False).returncode, 0)
 
     def test_os_release_value(self) -> None:
@@ -310,8 +312,10 @@ class MetadataTest(unittest.TestCase):
     def test_rewrite_os_version(self) -> None:
         metadata = copy.deepcopy(self.METADATA)
         metadata["osRelease"] = 'VERSION=3.0.20261104\nVERSION_ID=3.0.20261104\nBUILD_ID=1244962\n'
-        result = cosibuild.rewrite_metadata(metadata, {}, self.NEW, "new-uuid", "new-id", ("3.0.20261104", "3.0.20261104-x.1"))
-        self.assertEqual(result["osRelease"], 'VERSION=3.0.20261104-x.1\nVERSION_ID=3.0.20261104-x.1\nBUILD_ID=1244962\n')
+        version = ("3.0.20261104", "3.0.20261104-x.1")
+        result = cosibuild.rewrite_metadata(metadata, {}, self.NEW, "new-uuid", "new-id", version)
+        self.assertEqual(result["osRelease"],
+                         'VERSION=3.0.20261104-x.1\nVERSION_ID=3.0.20261104-x.1\nBUILD_ID=1244962\n')
         self.assertNotIn("osRelease", cosibuild.rewrite_metadata(self.METADATA, {}, self.NEW, "u", "i", ("a", "b")))
 
     def test_needs_usr_verity(self) -> None:
