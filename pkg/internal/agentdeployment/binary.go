@@ -287,6 +287,7 @@ func installAndSwitchBinary(ctx context.Context, log *slog.Logger, rawURL, expec
 	if err != nil {
 		return err
 	}
+
 	// Agents predating the capability command can still operate nspawn.
 	if mode != isolation.ModeNSpawn {
 		opts.Check = func(ctx context.Context, path string) error {
