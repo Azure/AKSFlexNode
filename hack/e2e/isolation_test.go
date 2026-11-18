@@ -252,7 +252,21 @@ func TestIsolationRuntimeDiagnostics(t *testing.T) {
 			version:  "Kubernetes v1.35.0\r\nextra\n",
 			want: []string{
 				"last observation: mismatch", "Snapshot mismatch: expected mode=container version=1.35.0",
+				`observed mode=container version=$'1.35.0\r'`,
 				`raw version (first 256 bytes): $'Kubernetes v1.35.0\r\nextra\n'`,
+				"unbounded-node-kube1.service journal", "unbounded-kube1 containerd.service status",
+			},
+			unwanted: []string{"unbounded-node-kube2.service"},
+		},
+		{
+			name:     "matching first line of multiline version",
+			state:    `{"isolation":"container","activeMachine":"kube1","appliedSettingsVersion":"settings","appliedKubernetesVersion":"1.35.0","nodeConfig":{"token":"fixture-secret"}}`,
+			expected: "container",
+			version:  "Kubernetes v1.35.0\nunexpected\n",
+			want: []string{
+				"last observation: mismatch", "Snapshot mismatch: expected mode=container version=1.35.0",
+				"observed mode=container version=1.35.0",
+				`raw version (first 256 bytes): $'Kubernetes v1.35.0\nunexpected\n'`,
 				"unbounded-node-kube1.service journal", "unbounded-kube1 containerd.service status",
 			},
 			unwanted: []string{"unbounded-node-kube2.service"},
