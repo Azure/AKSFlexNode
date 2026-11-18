@@ -38,6 +38,8 @@ github.com/Azure/kubelogin v0.2.22 h1:9Amjcxlo1pfqKIqrvj2wzEGkKiNTRPezo8nj2hPd9F
 github.com/Azure/kubelogin v0.2.22/go.mod h1:7HyUpdkiTMuuXx9+8WBy9uOPX1UshfnpFTNkpAk2TMk=
 github.com/Azure/unbounded v0.25.1-0.20261116190856-4463ebd0f2af h1:lfth2d73N+zYI++X0LcHfC5f8wetzOybuQpvHPZDNrM=
 github.com/Azure/unbounded v0.25.1-0.20261116190856-4463ebd0f2af/go.mod h1:Peiq4udYAnjymeev0BYJ4DhNsoHsOwBHeDWHt3B18VY=
+github.com/Azure/unbounded v0.26.1-0.20261118191151-52db4c04a44d h1:6VJ8BlB0SVINwk4PGg+j2QnDIFufdBwam0yW12wAwUM=
+github.com/Azure/unbounded v0.26.1-0.20261118191151-52db4c04a44d/go.mod h1:aYkW3HtFkYvXpCuQJDm0F84JqQJUOs2qSi/NHD28ONM=
 github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1 h1:WJTmL004Abzc5wDB5VtZG2PJk5ndYDgVacGqfirKxjM=
 github.com/AzureAD/microsoft-authentication-extensions-for-go/cache v0.1.1/go.mod h1:tCcJZ0uHAmvjsVYzEFivsRTN00oz5BEsRgQHu5JZ9WE=
 github.com/AzureAD/microsoft-authentication-library-for-go v1.10.1 h1:0O6j18nQDoIff6/mtosT5LNU2WehEwp+LqfX6699oqY=
