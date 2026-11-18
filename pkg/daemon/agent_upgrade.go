@@ -60,11 +60,13 @@ func (u *agentUpgradeCoordinator) RetryRecovery(ctx context.Context) (bool, erro
 	if err != nil || signal == nil || !signal.RecoveryRequired {
 		return false, err
 	}
+
 	cleanupCtx, cancel := agentdeployment.UpgradeCleanupContext(ctx)
 	defer cancel()
 	if err := u.Restart(cleanupCtx); err != nil {
 		return false, fmt.Errorf("retry AgentUpgrade recovery restart: %w", err)
 	}
+
 	return true, nil
 }
 

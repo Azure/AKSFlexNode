@@ -146,15 +146,23 @@ func TestRetryAgentUpgradeRecoveryReportsScheduledRestart(t *testing.T) {
 	}{
 		"no signal": {},
 		"ordinary pending upgrade": {
-			signal: &agentdeployment.UpgradeSignal{OperationName: "upgrade"},
+			signal: &agentdeployment.UpgradeSignal{
+				OperationName: "upgrade",
+			},
 		},
 		"recovery scheduled": {
-			signal: &agentdeployment.UpgradeSignal{OperationName: "upgrade", RecoveryRequired: true},
-			want:   true,
-			calls:  1,
+			signal: &agentdeployment.UpgradeSignal{
+				OperationName:    "upgrade",
+				RecoveryRequired: true,
+			},
+			want:  true,
+			calls: 1,
 		},
 		"restart failed": {
-			signal:     &agentdeployment.UpgradeSignal{OperationName: "upgrade", RecoveryRequired: true},
+			signal: &agentdeployment.UpgradeSignal{
+				OperationName:    "upgrade",
+				RecoveryRequired: true,
+			},
 			restartErr: errors.New("restart failed"),
 			wantErr:    true,
 			calls:      1,
@@ -170,11 +178,21 @@ func TestRetryAgentUpgradeRecoveryReportsScheduledRestart(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			fixture := &retryUpgradeFixture{signals: signals, restartErr: tc.restartErr}
+			fixture := &retryUpgradeFixture{
+				signals:    signals,
+				restartErr: tc.restartErr,
+			}
 			coordinator := &agentUpgradeCoordinator{UpgradeExecutor: fixture}
+
 			got, err := coordinator.RetryRecovery(t.Context())
-			if got != tc.want || (err != nil) != tc.wantErr || fixture.restarts != tc.calls {
-				t.Fatalf("scheduled = %v, error = %v, restarts = %d", got, err, fixture.restarts)
+			if got != tc.want {
+				t.Fatalf("scheduled = %v, want %v", got, tc.want)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, want error %v", err, tc.wantErr)
+			}
+			if fixture.restarts != tc.calls {
+				t.Fatalf("restarts = %d, want %d", fixture.restarts, tc.calls)
 			}
 		})
 	}

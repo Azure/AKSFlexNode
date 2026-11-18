@@ -47,9 +47,11 @@ func (r gatedMachineOperationReconciler) ReconcileMachineOperation(ctx context.C
 	if err := r.gate.wait(ctx); err != nil {
 		return ctrl.Result{}, err
 	}
+
 	if r.gate.stopping.Load() {
 		return ctrl.Result{}, nil
 	}
+
 	return r.delegate.ReconcileMachineOperation(ctx, name)
 }
 
@@ -66,8 +68,10 @@ func (r gatedRepaveReconciler) ReconcileRepave(ctx context.Context, source strin
 	if err := r.gate.wait(ctx); err != nil {
 		return ctrl.Result{}, err
 	}
+
 	if r.gate.stopping.Load() {
 		return ctrl.Result{}, nil
 	}
+
 	return r.delegate.ReconcileRepave(ctx, source)
 }

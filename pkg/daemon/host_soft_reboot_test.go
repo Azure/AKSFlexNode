@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -37,14 +39,19 @@ func softOperation(name string) *machinav1alpha3.MachineOperation {
 	}
 }
 
-func issuedSoftOperation(name, machine, bootID string) *machinav1alpha3.MachineOperation {
+func issuedSoftOperation(
+	name, machine, bootID string,
+) *machinav1alpha3.MachineOperation {
 	op := softOperation(name)
 	op.Status.Phase = machinav1alpha3.OperationPhaseInProgress
-	op.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{{
-		MachineRef: machine,
-		Phase:      machinav1alpha3.OperationPhaseInProgress,
-		BootID:     bootID,
-	}}
+	op.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{
+		{
+			MachineRef: machine,
+			Phase:      machinav1alpha3.OperationPhaseInProgress,
+			BootID:     bootID,
+		},
+	}
+
 	return op
 }
 
@@ -54,12 +61,18 @@ func softClient(objects ...client.Object) client.Client {
 		WithObjects(objects...).Build()
 }
 
-func getSoftOperation(t *testing.T, c client.Reader, name string) *machinav1alpha3.MachineOperation {
+func getSoftOperation(
+	t *testing.T,
+	c client.Reader,
+	name string,
+) *machinav1alpha3.MachineOperation {
 	t.Helper()
+
 	var op machinav1alpha3.MachineOperation
 	if err := c.Get(t.Context(), client.ObjectKey{Name: name}, &op); err != nil {
 		t.Fatal(err)
 	}
+
 	return &op
 }
 
@@ -69,8 +82,13 @@ type softHarness struct {
 	calls      int
 }
 
-func newSoftHarness(t *testing.T, c client.Client, reader client.Reader) *softHarness {
+func newSoftHarness(
+	t *testing.T,
+	c client.Client,
+	reader client.Reader,
+) *softHarness {
 	t.Helper()
+
 	gate := newStartupGate()
 	gate.open()
 	h := &softHarness{}
@@ -88,9 +106,19 @@ func newSoftHarness(t *testing.T, c client.Client, reader client.Reader) *softHa
 		h.calls++
 		op := getSoftOperation(t, reader, "soft")
 		target := operationTargetStatus(&op.Status, "machine1")
-		if op.Status.Phase != machinav1alpha3.OperationPhaseInProgress || target == nil || target.Phase != machinav1alpha3.OperationPhaseInProgress || target.BootID != "boot1" {
-			t.Fatalf("reboot before durable status: %+v", op.Status)
+		if op.Status.Phase != machinav1alpha3.OperationPhaseInProgress {
+			t.Fatalf("reboot before aggregate start: %+v", op.Status)
 		}
+		if target == nil {
+			t.Fatal("reboot before target start")
+		}
+		if target.Phase != machinav1alpha3.OperationPhaseInProgress {
+			t.Fatalf("target phase before reboot = %s", target.Phase)
+		}
+		if target.BootID != "boot1" {
+			t.Fatalf("target boot ID before reboot = %q", target.BootID)
+		}
+
 		return nil
 	}
 	handlers := agentdaemon.MachineOperationHandlers{
@@ -100,6 +128,7 @@ func newSoftHarness(t *testing.T, c client.Client, reader client.Reader) *softHa
 	if err != nil {
 		t.Fatal(err)
 	}
+
 	h.reconciler = gatedMachineOperationReconciler{
 		delegate: &flexMachineOperationReconciler{
 			delegate:    sdk,
@@ -110,6 +139,7 @@ func newSoftHarness(t *testing.T, c client.Client, reader client.Reader) *softHa
 		},
 		gate: gate,
 	}
+
 	return h
 }
 
@@ -129,11 +159,159 @@ func TestHostSoftRebootRecordsStatusBeforeCommandAndDefersDuplicates(t *testing.
 	op := getSoftOperation(t, c, "soft")
 	condition := apimeta.FindStatusCondition(op.Status.Conditions, "Completed")
 	target := operationTargetStatus(&op.Status, "machine1")
-	if op.Status.StartedAt == nil || op.Status.CompletedAt != nil || op.Status.ObservedMachineGeneration != 0 || target.StartedAt == nil || target.ObservedGeneration != 0 || condition == nil || condition.Status != metav1.ConditionFalse || condition.Reason != "InProgress" {
-		t.Fatalf("in-progress status = %+v", op.Status)
+	if op.Status.StartedAt == nil {
+		t.Fatal("aggregate start timestamp is missing")
+	}
+	if op.Status.CompletedAt != nil {
+		t.Fatalf("aggregate completed early: %v", op.Status.CompletedAt)
+	}
+	if op.Status.ObservedMachineGeneration != 0 {
+		t.Fatalf("aggregate observed generation = %d", op.Status.ObservedMachineGeneration)
+	}
+	if target == nil {
+		t.Fatal("missing local target")
+	}
+	if target.StartedAt == nil {
+		t.Fatal("target start timestamp is missing")
+	}
+	if target.ObservedGeneration != 0 {
+		t.Fatalf("target observed generation = %d", target.ObservedGeneration)
+	}
+	if condition == nil {
+		t.Fatal("missing Completed condition")
+	}
+	if condition.Status != metav1.ConditionFalse {
+		t.Fatalf("condition status = %s", condition.Status)
+	}
+	if condition.Reason != "InProgress" {
+		t.Fatalf("condition reason = %s", condition.Reason)
 	}
 	if got := getSoftOperation(t, c, "other").Status.Phase; got != "" {
 		t.Fatalf("deferred operation phase = %s", got)
+	}
+}
+
+type trackingActivationLock struct {
+	*fakeAgentUpgradeExecutor
+	held     bool
+	acquired int
+	closed   int
+}
+
+func (l *trackingActivationLock) Acquire() (io.Closer, error) {
+	l.acquired++
+	l.held = true
+	return l, nil
+}
+
+func (l *trackingActivationLock) Close() error {
+	l.closed++
+	l.held = false
+	return nil
+}
+
+func TestHostSoftRebootHoldsActivationLock(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		wait       bool
+		writeError bool
+		commandErr bool
+		wantWrites int
+		wantCalls  int
+		wantErr    bool
+	}{
+		"out-of-band wait": {
+			wait:       true,
+			wantWrites: 1,
+		},
+		"start write error": {
+			writeError: true,
+			wantWrites: 1,
+			wantErr:    true,
+		},
+		"command error": {
+			commandErr: true,
+			wantWrites: 2,
+			wantCalls:  1,
+		},
+		"success": {
+			wantWrites: 1,
+			wantCalls:  1,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			lock := &trackingActivationLock{fakeAgentUpgradeExecutor: &fakeAgentUpgradeExecutor{}}
+			objects := []client.Object{softOperation("soft")}
+			if tc.wait {
+				blocker := softOperation("oob")
+				blocker.Spec.OperationKind = machinav1alpha3.OperationHostHardReboot
+				objects = append(objects, blocker)
+			}
+			lists, writes, calls := 0, 0, 0
+			c := fake.NewClientBuilder().WithScheme(newScheme()).
+				WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
+				WithObjects(objects...).WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					lists++
+					if !lock.held || lock.acquired != 1 || lock.closed != 0 {
+						t.Error("live OOB list ran without the activation lock")
+					}
+					return c.List(ctx, list, opts...)
+				},
+				SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+					writes++
+					if !lock.held || lock.closed != 0 {
+						t.Error("status write ran without the activation lock")
+					}
+					if tc.writeError {
+						return errors.New("start write failed")
+					}
+					return c.SubResource(sub).Update(ctx, obj, opts...)
+				},
+			}).Build()
+			h := newSoftHarness(t, c, c)
+			h.handlers.agentUpgrade = lock
+			h.handlers.rebootHost = func(context.Context, *slog.Logger) error {
+				calls++
+				if !lock.held || lock.closed != 0 {
+					t.Error("command ran without the activation lock")
+				}
+				if tc.commandErr {
+					return errors.New("command failed")
+				}
+				return nil
+			}
+
+			result, err := h.handlers.reconcileHostSoftReboot(t.Context(), &fakeMachineOperationStore{}, agentdaemon.MachineOperation{Name: "soft"})
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, want error %v", err, tc.wantErr)
+			}
+			if (result.RequeueAfter == hostSoftRebootRetry) != tc.wait {
+				t.Fatalf("requeue = %v, wait = %v", result.RequeueAfter, tc.wait)
+			}
+			if lists != 1 {
+				t.Fatalf("lists = %d, want 1", lists)
+			}
+			if writes != tc.wantWrites {
+				t.Fatalf("writes = %d, want %d", writes, tc.wantWrites)
+			}
+			if calls != tc.wantCalls {
+				t.Fatalf("calls = %d, want %d", calls, tc.wantCalls)
+			}
+			if lock.acquired != 1 {
+				t.Fatalf("lock acquisitions = %d, want 1", lock.acquired)
+			}
+			if lock.closed != 1 {
+				t.Fatalf("lock closes = %d, want 1", lock.closed)
+			}
+			if lock.held {
+				t.Fatal("activation lock still held")
+			}
+		})
 	}
 }
 
@@ -169,11 +347,20 @@ func TestHostSoftRebootWriteFailureAndLockContention(t *testing.T) {
 			h := newSoftHarness(t, c, c)
 			h.handlers.agentUpgrade = &fakeAgentUpgradeExecutor{acquireErr: tc.lockErr}
 			result, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft")
-			if (err != nil) != tc.wantError || (result.RequeueAfter > 0) != tc.requeue || h.calls != 0 {
-				t.Fatalf("result = %+v, error = %v, reboot calls = %d", result, err, h.calls)
+			if (err != nil) != tc.wantError {
+				t.Fatalf("error = %v, want error %v", err, tc.wantError)
 			}
-			if h.handlers.gate.stopping.Load() || getSoftOperation(t, c, "soft").Status.Phase != "" {
-				t.Fatal("failure changed operation or stopped admission")
+			if (result.RequeueAfter > 0) != tc.requeue {
+				t.Fatalf("requeue = %v, want requeue %v", result.RequeueAfter, tc.requeue)
+			}
+			if h.calls != 0 {
+				t.Fatalf("reboot calls = %d, want 0", h.calls)
+			}
+			if h.handlers.gate.stopping.Load() {
+				t.Fatal("failure stopped admission")
+			}
+			if phase := getSoftOperation(t, c, "soft").Status.Phase; phase != "" {
+				t.Fatalf("failure changed phase to %s", phase)
 			}
 		})
 	}
@@ -208,12 +395,21 @@ func TestHostSoftRebootUncertainStatusWriteNeverRunsCommand(t *testing.T) {
 			}).Build()
 			h := newSoftHarness(t, c, c)
 			_, err := h.reconciler.ReconcileMachineOperation(ctx, "soft")
-			if err == nil || h.calls != 0 {
-				t.Fatalf("error = %v, reboot calls = %d", err, h.calls)
+			if err == nil {
+				t.Fatal("lost write response returned no error")
+			}
+			if h.calls != 0 {
+				t.Fatalf("reboot calls = %d, want 0", h.calls)
 			}
 			op := getSoftOperation(t, c, "soft")
-			if op.Status.Phase != machinav1alpha3.OperationPhaseInProgress || op.Status.Targets[0].Phase != machinav1alpha3.OperationPhaseInProgress || writes != 1 {
-				t.Fatalf("status = %+v, writes = %d", op.Status, writes)
+			if op.Status.Phase != machinav1alpha3.OperationPhaseInProgress {
+				t.Fatalf("aggregate phase = %s", op.Status.Phase)
+			}
+			if op.Status.Targets[0].Phase != machinav1alpha3.OperationPhaseInProgress {
+				t.Fatalf("target phase = %s", op.Status.Targets[0].Phase)
+			}
+			if writes != 1 {
+				t.Fatalf("writes = %d, want 1", writes)
 			}
 
 			if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
@@ -259,8 +455,14 @@ func TestHostSoftRebootCommandFailureAndCancellation(t *testing.T) {
 			if canceled {
 				want = machinav1alpha3.OperationPhaseInProgress
 			}
-			if op.Status.Phase != want || op.Status.Targets[0].Phase != want || h.handlers.gate.stopping.Load() != canceled {
-				t.Fatalf("status = %+v, stopping = %v", op.Status, h.handlers.gate.stopping.Load())
+			if op.Status.Phase != want {
+				t.Fatalf("aggregate phase = %s, want %s", op.Status.Phase, want)
+			}
+			if op.Status.Targets[0].Phase != want {
+				t.Fatalf("target phase = %s, want %s", op.Status.Targets[0].Phase, want)
+			}
+			if h.handlers.gate.stopping.Load() != canceled {
+				t.Fatalf("stopping = %v, want %v", h.handlers.gate.stopping.Load(), canceled)
 			}
 		})
 	}
@@ -324,26 +526,79 @@ func TestPublishHostSoftReboots(t *testing.T) {
 		reason        string
 	}{
 		{
-			name: "changed", current: "boot2",
-			phase: machinav1alpha3.OperationPhaseComplete, reason: "Succeeded",
+			name:    "changed",
+			current: "boot2",
+			phase:   machinav1alpha3.OperationPhaseComplete,
+			reason:  "Succeeded",
 		},
 		{
-			name: "same", current: "boot1",
-			phase: machinav1alpha3.OperationPhaseFailed, reason: "RebootNotObserved",
+			name:    "same",
+			current: "boot1",
+			phase:   machinav1alpha3.OperationPhaseFailed,
+			reason:  "RebootNotObserved",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
-			c := softClient(issuedSoftOperation("soft", "machine1", "boot1"))
-			for range 2 {
-				if err := publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return tc.current, nil }); err != nil {
-					t.Fatal(err)
-				}
+			writes := 0
+			c := fake.NewClientBuilder().WithScheme(newScheme()).
+				WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
+				WithObjects(issuedSoftOperation("soft", "machine1", "boot1")).
+				WithInterceptorFuncs(interceptor.Funcs{
+					SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+						writes++
+						return c.SubResource(sub).Update(ctx, obj, opts...)
+					},
+				}).Build()
+			publish := func() error {
+				return publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return tc.current, nil })
+			}
+
+			if err := publish(); err != nil {
+				t.Fatal(err)
 			}
 			op := getSoftOperation(t, c, "soft")
 			condition := apimeta.FindStatusCondition(op.Status.Conditions, "Completed")
-			if op.Status.Phase != tc.phase || op.Status.Targets[0].Phase != tc.phase || op.Status.CompletedAt == nil || op.Status.Targets[0].CompletedAt == nil || condition == nil || condition.Reason != tc.reason || op.Status.ObservedMachineGeneration != 0 {
-				t.Fatalf("status = %+v", op.Status)
+			if op.Status.Phase != tc.phase {
+				t.Fatalf("aggregate phase = %s, want %s", op.Status.Phase, tc.phase)
+			}
+			if len(op.Status.Targets) != 1 {
+				t.Fatalf("targets = %+v, want one", op.Status.Targets)
+			}
+			if op.Status.Targets[0].Phase != tc.phase {
+				t.Fatalf("target phase = %s, want %s", op.Status.Targets[0].Phase, tc.phase)
+			}
+			if op.Status.CompletedAt == nil {
+				t.Fatal("missing aggregate completion timestamp")
+			}
+			if op.Status.Targets[0].CompletedAt == nil {
+				t.Fatal("missing target completion timestamp")
+			}
+			if condition == nil {
+				t.Fatal("missing completion condition")
+			}
+			if condition.Reason != tc.reason {
+				t.Fatalf("condition reason = %s, want %s", condition.Reason, tc.reason)
+			}
+			if op.Status.ObservedMachineGeneration != 0 {
+				t.Fatalf("observed generation = %d", op.Status.ObservedMachineGeneration)
+			}
+			if op.Status.Targets[0].BootID != "boot1" {
+				t.Fatalf("target boot ID = %q", op.Status.Targets[0].BootID)
+			}
+			if writes != 1 {
+				t.Fatalf("first-pass writes = %d, want 1", writes)
+			}
+
+			if err := publish(); err != nil {
+				t.Fatal(err)
+			}
+			after := getSoftOperation(t, c, "soft")
+			if writes != 1 {
+				t.Fatalf("second pass wrote status: writes = %d", writes)
+			}
+			if !reflect.DeepEqual(op.Status, after.Status) {
+				t.Fatalf("second pass changed status: before = %+v, after = %+v", op.Status, after.Status)
 			}
 		})
 	}
@@ -368,6 +623,74 @@ func TestPublishHostSoftReboots(t *testing.T) {
 			}
 		}
 	})
+}
+
+func TestPublishHostSoftRebootsRejectsStaleList(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		phase  machinav1alpha3.OperationPhase
+		bootID string
+	}{
+		{
+			name:   "terminal target",
+			phase:  machinav1alpha3.OperationPhaseComplete,
+			bootID: "boot1",
+		},
+		{
+			name:   "different boot evidence",
+			phase:  machinav1alpha3.OperationPhaseInProgress,
+			bootID: "new-evidence",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			stale := issuedSoftOperation("soft", "machine1", "boot1")
+			fresh := stale.DeepCopy()
+			fresh.Status.Targets[0].Phase = tc.phase
+			fresh.Status.Targets[0].BootID = tc.bootID
+			writes, gets := 0, 0
+			c := fake.NewClientBuilder().WithScheme(newScheme()).
+				WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
+				WithObjects(fresh).WithInterceptorFuncs(interceptor.Funcs{
+				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+					if err := c.List(ctx, list, opts...); err != nil {
+						return err
+					}
+					operations, ok := list.(*machinav1alpha3.MachineOperationList)
+					if !ok {
+						return fmt.Errorf("unexpected list %T", list)
+					}
+					operations.Items = []machinav1alpha3.MachineOperation{*stale.DeepCopy()}
+					return nil
+				},
+				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+					gets++
+					return c.Get(ctx, key, obj, opts...)
+				},
+				SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+					writes++
+					return c.SubResource(sub).Update(ctx, obj, opts...)
+				},
+			}).Build()
+
+			if err := publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return "boot2", nil }); err != nil {
+				t.Fatal(err)
+			}
+			if gets != 1 {
+				t.Fatalf("fresh GETs = %d, want 1", gets)
+			}
+			if writes != 0 {
+				t.Fatalf("writes after stale list = %d, want 0", writes)
+			}
+			after := getSoftOperation(t, c, "soft")
+			if !reflect.DeepEqual(fresh.Status, after.Status) {
+				t.Fatalf("fresh status changed: before = %+v, after = %+v", fresh.Status, after.Status)
+			}
+		})
+	}
 }
 
 func TestPublishHostSoftRebootsReadAndWriteErrors(t *testing.T) {
@@ -397,8 +720,11 @@ func TestPublishHostSoftRebootsReadAndWriteErrors(t *testing.T) {
 				}
 				return "boot2", nil
 			})
-			if err == nil || getSoftOperation(t, c, "soft").Status.Phase != machinav1alpha3.OperationPhaseInProgress {
-				t.Fatalf("error = %v", err)
+			if err == nil {
+				t.Fatal("publication failure returned no error")
+			}
+			if phase := getSoftOperation(t, c, "soft").Status.Phase; phase != machinav1alpha3.OperationPhaseInProgress {
+				t.Fatalf("phase = %s, want InProgress", phase)
 			}
 		})
 	}
@@ -407,7 +733,14 @@ func TestPublishHostSoftRebootsReadAndWriteErrors(t *testing.T) {
 func TestOutOfBandHostOperations(t *testing.T) {
 	t.Parallel()
 
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Labels: map[string]string{"rack": "a"}}}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node1",
+			Labels: map[string]string{
+				"rack": "a",
+			},
+		},
+	}
 	makeOp := func(name string, kind machinav1alpha3.OperationKind) *machinav1alpha3.MachineOperation {
 		op := softOperation(name)
 		op.Spec.OperationKind = kind
@@ -415,73 +748,94 @@ func TestOutOfBandHostOperations(t *testing.T) {
 	}
 	selector := makeOp("selector", machinav1alpha3.OperationHostPowerOff)
 	selector.Spec.MachineRef = ""
-	selector.Spec.MachineSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "a"}}
+	selector.Spec.MachineSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"rack": "a",
+		},
+	}
+
+	failedMedia := makeOp("replace", machinav1alpha3.OperationHostReplace)
+	failedMedia.Status.Phase = machinav1alpha3.OperationPhaseFailed
+	failedMedia.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{
+		{
+			MachineRef: "machine1",
+			Phase:      machinav1alpha3.OperationPhaseFailed,
+			BootMedia: &machinav1alpha3.MachineOperationBootMediaStatus{
+				ImageWritten: true,
+				Released:     true,
+				Cleaned:      true,
+			},
+		},
+	}
+	confirmedMedia := failedMedia.DeepCopy()
+	confirmedMedia.Name = "replace-finished"
+	confirmedMedia.Status.Targets[0].Conditions = []metav1.Condition{
+		{
+			Type:   machinav1alpha3.MachineOperationConditionCloudInitDone,
+			Status: metav1.ConditionTrue,
+		},
+	}
+	localTarget := makeOp("local-target", machinav1alpha3.OperationHostPowerOn)
+	localTarget.Spec.MachineRef = "other"
+	localTarget.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{
+		{
+			MachineRef: "machine1",
+			Phase:      machinav1alpha3.OperationPhaseInProgress,
+		},
+	}
+	foreignTarget := makeOp("foreign", machinav1alpha3.OperationHostPowerOn)
+	foreignTarget.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{
+		{
+			MachineRef: "other",
+			Phase:      machinav1alpha3.OperationPhaseInProgress,
+		},
+	}
+	completeTarget := makeOp("finished", machinav1alpha3.OperationHostPowerOn)
+	completeTarget.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{
+		{
+			MachineRef: "machine1",
+			Phase:      machinav1alpha3.OperationPhaseComplete,
+		},
+	}
+
 	tests := map[string]struct {
 		op   *machinav1alpha3.MachineOperation
 		want bool
 	}{
-		"explicit reference": {op: makeOp("explicit", machinav1alpha3.OperationHostHardReboot), want: true},
-		"node selector":      {op: selector, want: true},
-		"allocation":         {op: makeOp("allocation", machinav1alpha3.OperationHostAllocate)},
-		"release":            {op: makeOp("release", machinav1alpha3.OperationHostRelease)},
-		"local reboot":       {op: makeOp("soft", machinav1alpha3.OperationHostSoftReboot)},
-		"failed media": {op: func() *machinav1alpha3.MachineOperation {
-			op := makeOp("replace", machinav1alpha3.OperationHostReplace)
-			op.Status.Phase = machinav1alpha3.OperationPhaseFailed
-			op.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{{
-				MachineRef: "machine1",
-				Phase:      machinav1alpha3.OperationPhaseFailed,
-				BootMedia: &machinav1alpha3.MachineOperationBootMediaStatus{
-					ImageWritten: true,
-					Released:     true,
-					Cleaned:      true,
-				},
-			}}
-			return op
-		}(), want: true},
-		"released media with confirmed boot": {op: func() *machinav1alpha3.MachineOperation {
-			op := makeOp("replace-finished", machinav1alpha3.OperationHostReplace)
-			op.Status.Phase = machinav1alpha3.OperationPhaseFailed
-			op.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{{
-				MachineRef: "machine1",
-				Phase:      machinav1alpha3.OperationPhaseFailed,
-				BootMedia: &machinav1alpha3.MachineOperationBootMediaStatus{
-					ImageWritten: true,
-					Released:     true,
-					Cleaned:      true,
-				},
-				Conditions: []metav1.Condition{{
-					Type:   machinav1alpha3.MachineOperationConditionCloudInitDone,
-					Status: metav1.ConditionTrue,
-				}},
-			}}
-			return op
-		}()},
-		"local authoritative target in progress": {op: func() *machinav1alpha3.MachineOperation {
-			op := makeOp("local-target", machinav1alpha3.OperationHostPowerOn)
-			op.Spec.MachineRef = "other"
-			op.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{{
-				MachineRef: "machine1",
-				Phase:      machinav1alpha3.OperationPhaseInProgress,
-			}}
-			return op
-		}(), want: true},
-		"foreign authoritative target": {op: func() *machinav1alpha3.MachineOperation {
-			op := makeOp("foreign", machinav1alpha3.OperationHostPowerOn)
-			op.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{{
-				MachineRef: "other",
-				Phase:      machinav1alpha3.OperationPhaseInProgress,
-			}}
-			return op
-		}()},
-		"complete local target": {op: func() *machinav1alpha3.MachineOperation {
-			op := makeOp("finished", machinav1alpha3.OperationHostPowerOn)
-			op.Status.Targets = []machinav1alpha3.MachineOperationTargetStatus{{
-				MachineRef: "machine1",
-				Phase:      machinav1alpha3.OperationPhaseComplete,
-			}}
-			return op
-		}()},
+		"explicit reference": {
+			op:   makeOp("explicit", machinav1alpha3.OperationHostHardReboot),
+			want: true,
+		},
+		"node selector": {
+			op:   selector,
+			want: true,
+		},
+		"allocation": {
+			op: makeOp("allocation", machinav1alpha3.OperationHostAllocate),
+		},
+		"release": {
+			op: makeOp("release", machinav1alpha3.OperationHostRelease),
+		},
+		"local reboot": {
+			op: makeOp("soft", machinav1alpha3.OperationHostSoftReboot),
+		},
+		"failed media": {
+			op:   failedMedia,
+			want: true,
+		},
+		"released media with confirmed boot": {
+			op: confirmedMedia,
+		},
+		"local authoritative target in progress": {
+			op:   localTarget,
+			want: true,
+		},
+		"foreign authoritative target": {
+			op: foreignTarget,
+		},
+		"complete local target": {
+			op: completeTarget,
+		},
 	}
 	for name, tc := range tests {
 		t.Run(name, func(t *testing.T) {
@@ -517,8 +871,14 @@ func TestHostSoftRebootWaitsForOutOfBandCompletion(t *testing.T) {
 	h := newSoftHarness(t, c, c)
 	for range 2 {
 		result, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft")
-		if err != nil || result.RequeueAfter != hostSoftRebootRetry || h.calls != 0 {
-			t.Fatalf("result = %+v, error = %v, reboot calls = %d", result, err, h.calls)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if result.RequeueAfter != hostSoftRebootRetry {
+			t.Fatalf("requeue = %v", result.RequeueAfter)
+		}
+		if h.calls != 0 {
+			t.Fatalf("reboot calls = %d, want 0", h.calls)
 		}
 	}
 	waiting := getSoftOperation(t, c, "soft")
@@ -566,19 +926,49 @@ func TestHostSoftRebootUsesDirectReaderForBlockersAndSelectors(t *testing.T) {
 
 	soft := softOperation("soft")
 	soft.Spec.MachineRef = ""
-	soft.Spec.MachineSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "a"}}
+	soft.Spec.MachineSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"rack": "a",
+		},
+	}
 	oob := softOperation("oob")
 	oob.Spec.OperationKind = machinav1alpha3.OperationHostPowerOff
 	oob.Spec.MachineRef = ""
-	oob.Spec.MachineSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "a"}}
-	api := softClient(soft, oob, &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Labels: map[string]string{"rack": "a"}}})
-	cached := softClient(soft.DeepCopy(), &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Labels: map[string]string{"rack": "b"}}})
+	oob.Spec.MachineSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"rack": "a",
+		},
+	}
+	apiNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node1",
+			Labels: map[string]string{
+				"rack": "a",
+			},
+		},
+	}
+	cachedNode := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node1",
+			Labels: map[string]string{
+				"rack": "b",
+			},
+		},
+	}
+	api := softClient(soft, oob, apiNode)
+	cached := softClient(soft.DeepCopy(), cachedNode)
 	// Use a stale read client with writes forwarded to the API client.
 	writer := &staleReadClient{Client: api, stale: cached}
 	h := newSoftHarness(t, writer, api)
 	result, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft")
-	if err != nil || result.RequeueAfter != hostSoftRebootRetry || h.calls != 0 {
-		t.Fatalf("result = %+v, error = %v, calls = %d", result, err, h.calls)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.RequeueAfter != hostSoftRebootRetry {
+		t.Fatalf("requeue = %v", result.RequeueAfter)
+	}
+	if h.calls != 0 {
+		t.Fatalf("reboot calls = %d, want 0", h.calls)
 	}
 	if got := getSoftOperation(t, api, "soft").Status.Message; !strings.Contains(got, "oob") {
 		t.Fatalf("message = %q", got)
@@ -590,10 +980,20 @@ type staleReadClient struct {
 	stale client.Reader
 }
 
-func (c *staleReadClient) Get(ctx context.Context, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+func (c *staleReadClient) Get(
+	ctx context.Context,
+	key client.ObjectKey,
+	obj client.Object,
+	opts ...client.GetOption,
+) error {
 	return c.stale.Get(ctx, key, obj, opts...)
 }
-func (c *staleReadClient) List(ctx context.Context, list client.ObjectList, opts ...client.ListOption) error {
+
+func (c *staleReadClient) List(
+	ctx context.Context,
+	list client.ObjectList,
+	opts ...client.ListOption,
+) error {
 	return c.stale.List(ctx, list, opts...)
 }
 
@@ -712,53 +1112,109 @@ func TestAgentContainerSystemctlUsesHostExec(t *testing.T) {
 func TestHostSoftRebootStartupPublicationRetriesBeforeGateOpens(t *testing.T) {
 	t.Parallel()
 
-	writes := 0
-	c := fake.NewClientBuilder().WithScheme(newScheme()).
-		WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
-		WithObjects(issuedSoftOperation("soft", "machine1", "boot1")).WithInterceptorFuncs(interceptor.Funcs{
-		SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-			writes++
-			if writes == 1 {
-				return errors.New("temporary status failure")
-			}
-			return c.SubResource(sub).Update(ctx, obj, opts...)
-		},
-	}).Build()
-	gate := newStartupGate()
-	attempts := 0
-	openGateAfterAgentUpgradeJudgment(t.Context(), discardLogger(), func(ctx context.Context) error {
-		attempts++
-		select {
-		case <-gate.ready:
-			t.Error("gate opened before reboot publication")
-		default:
-		}
-		return publishHostSoftReboots(ctx, discardLogger(), c, c, "machine1", func() (string, error) { return "boot2", nil })
-	}, func() (*agentdeployment.UpgradeSignal, error) {
-		return nil, nil
-	}, noHeldAssets, gate.open, time.Millisecond)
+	for _, failure := range []string{"write", "boot"} {
+		t.Run(failure, func(t *testing.T) {
+			t.Parallel()
 
-	if attempts != 2 || getSoftOperation(t, c, "soft").Status.Phase != machinav1alpha3.OperationPhaseComplete {
-		t.Fatalf("attempts = %d, status = %+v", attempts, getSoftOperation(t, c, "soft").Status)
+			writes := 0
+			c := fake.NewClientBuilder().WithScheme(newScheme()).
+				WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
+				WithObjects(issuedSoftOperation("soft", "machine1", "boot1")).WithInterceptorFuncs(interceptor.Funcs{
+				SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
+					writes++
+					if failure == "write" && writes == 1 {
+						return errors.New("temporary status failure")
+					}
+					return c.SubResource(sub).Update(ctx, obj, opts...)
+				},
+			}).Build()
+			gate := newStartupGate()
+			attempts := 0
+			openGateAfterAgentUpgradeJudgment(t.Context(), discardLogger(), func(ctx context.Context) error {
+				attempts++
+				select {
+				case <-gate.ready:
+					t.Error("gate opened before reboot publication")
+				default:
+				}
+				if attempts == 2 {
+					op := getSoftOperation(t, c, "soft")
+					if op.Status.Phase != machinav1alpha3.OperationPhaseInProgress {
+						t.Fatalf("failed publication changed phase: %+v", op.Status)
+					}
+					if op.Status.Targets[0].BootID != "boot1" {
+						t.Fatalf("failed publication changed boot ID: %+v", op.Status.Targets[0])
+					}
+				}
+				return publishHostSoftReboots(ctx, discardLogger(), c, c, "machine1", func() (string, error) {
+					if failure == "boot" && attempts == 1 {
+						return "", errors.New("temporary boot read failure")
+					}
+					return "boot2", nil
+				})
+			}, func() (*agentdeployment.UpgradeSignal, error) {
+				return nil, nil
+			}, noHeldAssets, gate.open, time.Millisecond)
+
+			if attempts != 2 {
+				t.Fatalf("attempts = %d, want 2", attempts)
+			}
+			if op := getSoftOperation(t, c, "soft"); op.Status.Phase != machinav1alpha3.OperationPhaseComplete {
+				t.Fatalf("status = %+v", op.Status)
+			}
+			select {
+			case <-gate.ready:
+			default:
+				t.Fatal("gate did not open after publication")
+			}
+		})
 	}
-	select {
-	case <-gate.ready:
-	default:
-		t.Fatal("gate did not open after publication")
+}
+
+func TestHostSoftRebootInitialBootReadFailure(t *testing.T) {
+	t.Parallel()
+
+	c := softClient(softOperation("soft"))
+	h := newSoftHarness(t, c, c)
+	h.handlers.readBootID = func() (string, error) { return "", errors.New("boot failed") }
+
+	if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
+		t.Fatalf("boot failure publication: %v", err)
+	}
+	if h.calls != 0 {
+		t.Fatalf("reboot calls = %d, want 0", h.calls)
+	}
+	op := getSoftOperation(t, c, "soft")
+	if op.Status.Phase != machinav1alpha3.OperationPhaseFailed {
+		t.Fatalf("phase = %s, want Failed", op.Status.Phase)
+	}
+	condition := apimeta.FindStatusCondition(op.Status.Conditions, "Completed")
+	if condition == nil {
+		t.Fatal("missing Completed condition")
+	}
+	if condition.Reason != "ExecutionFailed" {
+		t.Fatalf("reason = %s, want ExecutionFailed", condition.Reason)
+	}
+	if condition.Message != "boot failed" {
+		t.Fatalf("message = %q, want boot failed", condition.Message)
 	}
 }
 
 func TestHostSoftRebootPreflightReadErrors(t *testing.T) {
 	t.Parallel()
 
-	for _, failure := range []string{"boot", "list", "node"} {
+	for _, failure := range []string{"list", "node"} {
 		t.Run(failure, func(t *testing.T) {
 			t.Parallel()
 
 			blocker := softOperation("oob")
 			blocker.Spec.OperationKind = machinav1alpha3.OperationHostPowerOff
 			blocker.Spec.MachineRef = ""
-			blocker.Spec.MachineSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "a"}}
+			blocker.Spec.MachineSelector = &metav1.LabelSelector{
+				MatchLabels: map[string]string{
+					"rack": "a",
+				},
+			}
 			objects := []client.Object{softOperation("soft")}
 			if failure == "node" {
 				objects = append(objects, blocker)
@@ -780,13 +1236,17 @@ func TestHostSoftRebootPreflightReadErrors(t *testing.T) {
 				},
 			}).Build()
 			h := newSoftHarness(t, c, c)
-			if failure == "boot" {
-				h.handlers.readBootID = func() (string, error) { return "", errors.New("boot failed") }
-			}
 
 			_, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft")
-			if err == nil || h.calls != 0 || getSoftOperation(t, c, "soft").Status.Phase != "" {
-				t.Fatalf("error = %v, reboot calls = %d", err, h.calls)
+			if h.calls != 0 {
+				t.Fatalf("reboot calls = %d, want 0", h.calls)
+			}
+			op := getSoftOperation(t, c, "soft")
+			if err == nil {
+				t.Fatal("preflight read error was not returned")
+			}
+			if !reflect.DeepEqual(op.Status, machinav1alpha3.MachineOperationStatus{}) {
+				t.Fatalf("read error changed status: %+v", op.Status)
 			}
 		})
 	}
@@ -815,8 +1275,14 @@ func TestHostSoftRebootFailedPublicationDoesNotReplayCommand(t *testing.T) {
 	}
 
 	_, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft")
-	if !errors.Is(err, publicationErr) || h.handlers.gate.stopping.Load() || writes != 2 {
-		t.Fatalf("error = %v, stopping = %v, writes = %d", err, h.handlers.gate.stopping.Load(), writes)
+	if !errors.Is(err, publicationErr) {
+		t.Fatalf("error = %v, want publication error", err)
+	}
+	if h.handlers.gate.stopping.Load() {
+		t.Fatal("command failure left admission stopped")
+	}
+	if writes != 2 {
+		t.Fatalf("writes = %d, want 2", writes)
 	}
 	if got := getSoftOperation(t, c, "soft").Status.Phase; got != machinav1alpha3.OperationPhaseInProgress {
 		t.Fatalf("phase = %s", got)
@@ -833,10 +1299,21 @@ func TestHostSoftRebootFailedPublicationDoesNotReplayCommand(t *testing.T) {
 func TestFlexOperationWatchUsesLiveIdentityAndLabels(t *testing.T) {
 	t.Parallel()
 
-	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1", Labels: map[string]string{"rack": "a"}}}
+	node := &corev1.Node{
+		ObjectMeta: metav1.ObjectMeta{
+			Name: "node1",
+			Labels: map[string]string{
+				"rack": "a",
+			},
+		},
+	}
 	op := softOperation("soft")
 	op.Spec.MachineRef = ""
-	op.Spec.MachineSelector = &metav1.LabelSelector{MatchLabels: map[string]string{"rack": "a"}}
+	op.Spec.MachineSelector = &metav1.LabelSelector{
+		MatchLabels: map[string]string{
+			"rack": "a",
+		},
+	}
 	c := softClient(node, op)
 	h := newSoftHarness(t, c, c)
 	watch := h.reconciler.delegate.(*flexMachineOperationReconciler)
