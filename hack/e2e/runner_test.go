@@ -63,7 +63,12 @@ with_cluster_lock() {
 }
 machine_configmap_upsert() { :; }
 _deploy_and_start_agent() {
-  jq -e --arg mode "$MODE" '.bootstrap.isolation == $mode and .agent.requireMachineRegistration == true and .components.kubernetes == "1.35.0" and .node.maxPods == 58' "$2" >/dev/null
+  jq -e --arg mode "$MODE" '
+    .bootstrap.isolation == $mode
+    and .bootstrap.experimental.containerIsolation == ($mode == "container")
+    and .agent.requireMachineRegistration == true
+    and .components.kubernetes == "1.35.0"
+    and .node.maxPods == 58' "$2" >/dev/null
   if [[ "$MODE" != nspawn ]]; then jq -e '.agent.machineReconcileInterval == "5s"' "$2" >/dev/null; fi
 }
 E2E_KUBELET_MAX_PODS=58

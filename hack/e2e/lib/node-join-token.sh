@@ -84,6 +84,7 @@ node_join_token() {
     --arg kubeReservedMemory "${E2E_KUBELET_KUBE_RESERVED_MEMORY}" \
     '.agent.logLevel = "debug"
       | .bootstrap.isolation = $isolation
+      | .bootstrap.experimental.containerIsolation = ($isolation == "container")
       | if $isolation == "nspawn" then . else .agent.machineReconcileInterval = "5s" end
       | .agent.machineClient.mode = "in-cluster"
       | .agent.machineClient.endpointUrl = $machineEndpointURL
