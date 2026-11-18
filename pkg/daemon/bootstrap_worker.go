@@ -12,11 +12,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
-	"github.com/Azure/unbounded/pkg/agent/containerops"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/isolation/none"
-	"github.com/Azure/unbounded/pkg/agent/noneops"
-	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -30,65 +26,28 @@ func ValidateAgentDeployment(mode isolation.Mode, containerized bool) error {
 
 // ValidateWorkerBootstrap refuses an isolation switch or incompatible host before mutation.
 func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.Logger, applied *State, containerized bool) error {
-	return validateWorkerBootstrap(ctx, cfg, log, applied, containerized, host.EnsureNoExistingDeploymentFor)
-}
-
-func validateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.Logger, applied *State, containerized bool, ensureClean func(context.Context, *slog.Logger, isolation.Mode) error) error {
 	if err := ValidateAgentDeployment(cfg.Bootstrap.Isolation, containerized); err != nil {
 		return err
 	}
 	if applied != nil && applied.Isolation != cfg.Bootstrap.Isolation {
 		return fmt.Errorf("worker isolation change requires reset")
 	}
-	artifacts, err := agentruntime.NoneUpgradeArtifactsPresent()
-	if err != nil {
-		return err
-	}
-	present := artifacts || noneops.Present()
-	ociArtifacts, err := agentruntime.ContainerUpgradeArtifactPresent()
-	if err != nil {
-		return err
-	}
-	ociPresent := ociArtifacts || containerops.Present()
-	return validateBootstrapArtifacts(ctx, cfg.Bootstrap.Isolation, log, applied, present, ociPresent, ensureClean)
-}
 
-func validateBootstrapArtifacts(ctx context.Context, mode isolation.Mode, log *slog.Logger, applied *State, present, ociPresent bool, ensureClean func(context.Context, *slog.Logger, isolation.Mode) error) error {
-	if mode != isolation.ModeContainer && ociPresent {
-		return fmt.Errorf("OCI worker is present; reset before changing isolation")
+	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
+	if err != nil {
+		return err
 	}
-	if mode == isolation.ModeContainer {
-		if present {
-			return fmt.Errorf("host-native worker is present; reset before changing isolation")
-		}
-		if applied == nil && ociPresent {
-			return fmt.Errorf("OCI worker has no applied state; reset before bootstrap")
-		}
-		if applied != nil {
-			// State loading and selection validate the installed worker before mutation.
-			// Its owned bpffs paths are not evidence of a conflicting deployment.
-			return nil
-		}
-		return ensureClean(ctx, log, isolation.ModeNSpawn)
-	}
-	if mode == isolation.ModeNone {
-		if applied == nil && present {
-			return fmt.Errorf("host-native worker has no applied state; reset before bootstrap")
-		}
-		if err := ensureClean(ctx, log, isolation.ModeNSpawn); err != nil {
-			return err
-		}
-		return none.NewDefault(log).PreflightOwnership()
-	}
-	if present {
-		return fmt.Errorf("host-native worker is present; reset before changing isolation")
-	}
-	return nil
+	return worker.ValidateBootstrap(ctx, log, applied != nil)
 }
 
 // BootstrapState selects the installed worker for a none/OCI reapply.
 // Nspawn retains its existing bootstrap behavior.
 func BootstrapState(applied, seeded *State, cfg *config.Config) (*State, bool, error) {
+	switch cfg.Bootstrap.Isolation {
+	case isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer:
+	default:
+		return nil, false, fmt.Errorf("unsupported worker isolation %q", cfg.Bootstrap.Isolation)
+	}
 	if applied == nil || cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
 		return seeded, false, nil
 	}

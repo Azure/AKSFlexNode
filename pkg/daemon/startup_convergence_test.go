@@ -3,10 +3,126 @@ package daemon
 import (
 	"context"
 	"errors"
+	"log/slog"
 	"slices"
 	"strings"
 	"testing"
+
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
+	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
+
+func TestValidateStartupState(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name    string
+		mode    isolation.Mode
+		applied *State
+		wantErr string
+	}{
+		{
+			name: "nspawn without state",
+			mode: isolation.ModeNSpawn,
+		},
+		{
+			name:    "none without state",
+			mode:    isolation.ModeNone,
+			wantErr: "applied none worker state is missing",
+		},
+		{
+			name:    "OCI without state",
+			mode:    isolation.ModeContainer,
+			wantErr: "applied container worker state is missing",
+		},
+		{
+			name:    "none with state",
+			mode:    isolation.ModeNone,
+			applied: &State{Isolation: isolation.ModeNone},
+		},
+		{
+			name:    "OCI with state",
+			mode:    isolation.ModeContainer,
+			applied: &State{Isolation: isolation.ModeContainer},
+		},
+		{
+			name:    "mode change",
+			mode:    isolation.ModeContainer,
+			applied: &State{Isolation: isolation.ModeNone},
+			wantErr: "worker isolation change requires reset",
+		},
+		{
+			name:    "empty mode",
+			wantErr: "unsupported worker isolation",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			err := validateStartupState(tc.mode, tc.applied)
+			if (tc.wantErr == "" && err != nil) || (tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr))) {
+				t.Fatalf("validation error = %v, want %q", err, tc.wantErr)
+			}
+		})
+	}
+}
+
+type startupRecoveryRuntime struct {
+	fakeWorkerRuntime
+	input agentruntime.Inputs
+	calls int
+	err   error
+}
+
+func (r *startupRecoveryRuntime) Recover(_ *slog.Logger, input agentruntime.Inputs) phases.Task {
+	r.calls++
+	r.input = input
+	return testTask{
+		name: "recover",
+		run:  func() error { return r.err },
+	}
+}
+
+func TestRecoverStartupWorkerUsesAppliedState(t *testing.T) {
+	t.Parallel()
+
+	for _, mode := range []isolation.Mode{isolation.ModeNSpawn, isolation.ModeNone, isolation.ModeContainer} {
+		t.Run(string(mode), func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: mode}}
+			appliedConfig := &agentconfig.AgentConfig{}
+			applied := &State{ActiveMachine: "kube2", NodeConfig: appliedConfig}
+			worker := &startupRecoveryRuntime{}
+			if err := recoverStartupWorker(t.Context(), cfg, discardLogger(), worker, applied); err != nil {
+				t.Fatal(err)
+			}
+			if mode == isolation.ModeNSpawn {
+				if worker.calls != 0 {
+					t.Fatal("nspawn startup unexpectedly recovered a worker")
+				}
+				return
+			}
+			if worker.calls != 1 || worker.input.Config != cfg || worker.input.Node.Slot != "kube2" || worker.input.Node.Config != appliedConfig {
+				t.Fatalf("recovery input = %+v, calls = %d", worker.input, worker.calls)
+			}
+		})
+	}
+}
+
+func TestRecoverStartupWorkerPropagatesFailure(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNone}}
+	worker := &startupRecoveryRuntime{err: errors.New("recovery failed")}
+	err := recoverStartupWorker(t.Context(), cfg, discardLogger(), worker, &State{})
+	if err == nil || !strings.Contains(err.Error(), "recover worker at startup: recovery failed") {
+		t.Fatalf("recovery error = %v", err)
+	}
+}
 
 type startupConvergenceFixture struct {
 	events *[]string
