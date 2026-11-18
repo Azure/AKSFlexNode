@@ -116,7 +116,7 @@ MachineOperations are cluster-scoped. The daemon group requires cluster-wide rea
 kubectl get machineoperation upgrade-agent-worker-01 -w
 ```
 
-A host provisioning system that has already authenticated and staged a candidate can activate it directly without creating an Unbounded `MachineOperation`:
+A host provisioning system that has already authenticated and staged a candidate can activate it directly without creating an Unbounded `MachineOperation`. Both preflight and activation require valid canonical configuration at `/etc/aks-flex-node/config.json`, even while the service is stopped. After reset, provision that configuration before running either command:
 
 ```bash
 sudo /var/tmp/aks-flex-node-candidate agent-upgrade --preflight

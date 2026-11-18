@@ -7,6 +7,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
@@ -31,6 +32,9 @@ func newCommand() *cobra.Command {
 			cfg, err := config.LoadConfig(configPath)
 			if err != nil {
 				return fmt.Errorf("failed to load config from %s: %w", configPath, err)
+			}
+			if err := daemon.ValidateAgentDeployment(cfg.Bootstrap.Isolation, agentdeployment.Containerized()); err != nil {
+				return err
 			}
 			logger := logger.CreateLogger(cfg.Agent.LogLevel, cfg.Agent.LogDir)
 

@@ -5,7 +5,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+	hostdaemon "github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
 // newAgentUpgradeRecoveryCommand remains callable only as a local root
@@ -18,7 +19,8 @@ func newAgentUpgradeRecoveryCommand() *cobra.Command {
 		Hidden: true,
 		Args:   cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := agentdeployment.RecoverAgentUpgrade(cmd.Context(), message); err != nil {
+			log := logger.CreateLogger("info", "")
+			if err := hostdaemon.RecoverAgentUpgrade(cmd.Context(), log, message); err != nil {
 				return fmt.Errorf("recover AgentUpgrade: %w", err)
 			}
 			return nil

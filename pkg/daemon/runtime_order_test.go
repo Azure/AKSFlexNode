@@ -8,7 +8,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
-	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -35,20 +35,16 @@ func (r *recordingRuntime) task(name string) phases.Task {
 	}
 }
 
-func (r *recordingRuntime) Stop(_ *slog.Logger, machine string) phases.Task {
-	r.machine = machine
-	return r.task("stop")
+func (r *recordingRuntime) Prepare(log *slog.Logger, input agentruntime.Inputs) phases.Task {
+	r.machine = input.Previous.Slot
+	return phases.Serial(log, r.task("stop"), r.task("network"))
 }
 
-func (r *recordingRuntime) CleanupNetwork(*slog.Logger) phases.Task {
-	return r.task("network")
-}
-
-func (r *recordingRuntime) Start(_ *config.Config, _ *slog.Logger, machine string, _ *goalstates.MachineGoalState, _ *goalstates.ContainerImageArchiveStaging) phases.Task {
+func (r *recordingRuntime) Start(_ *slog.Logger, input agentruntime.Inputs) phases.Task {
 	return testTask{
 		name: "start",
 		run: func() error {
-			if machine != goalstates.NSpawnMachineKube2 {
+			if input.Node.Slot != goalstates.NSpawnMachineKube2 {
 				return errors.New("wrong replacement machine")
 			}
 			return r.task("start").Do(context.Background())
@@ -56,11 +52,11 @@ func (r *recordingRuntime) Start(_ *config.Config, _ *slog.Logger, machine strin
 	}
 }
 
-func (r *recordingRuntime) Retire(_ *slog.Logger, machine string) phases.Task {
+func (r *recordingRuntime) Retire(_ *slog.Logger, input agentruntime.Inputs) phases.Task {
 	return testTask{
 		name: "retire",
 		run: func() error {
-			if machine != r.machine {
+			if input.Previous.Slot != r.machine {
 				return errors.New("wrong retired machine")
 			}
 			return r.task("retire").Do(context.Background())

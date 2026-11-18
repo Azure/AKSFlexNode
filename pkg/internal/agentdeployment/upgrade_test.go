@@ -8,6 +8,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 // TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst: a host that would
@@ -21,6 +23,7 @@ func TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst(t *testing.T) {
 	executor := &HostUpgrade{
 		log:             slog.New(slog.DiscardHandler),
 		paths:           paths,
+		mode:            isolation.ModeNSpawn,
 		signals:         NewUpgradeSignalStore(paths.SignalPath),
 		guardLegacySeed: func() error { return guardErr },
 	}
@@ -156,7 +159,7 @@ func TestHostAgentUpgradeExecutorAbortUsesCleanupContext(t *testing.T) {
 	if err := signals.recordCandidate(paths.GreenPath); err != nil {
 		t.Fatalf("recordCandidate: %v", err)
 	}
-	executor := &HostUpgrade{paths: paths, signals: signals}
+	executor := &HostUpgrade{paths: paths, signals: signals, mode: isolation.ModeNSpawn}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if err := executor.Abort(ctx); err != nil {
@@ -179,7 +182,7 @@ func TestHostAgentUpgradeExecutorAbortPreservesSignalOnRollbackFailure(t *testin
 	if err := signals.recordCandidate(paths.BluePath); err != nil {
 		t.Fatalf("recordCandidate: %v", err)
 	}
-	executor := &HostUpgrade{paths: paths, signals: signals}
+	executor := &HostUpgrade{paths: paths, signals: signals, mode: isolation.ModeNSpawn}
 	if err := executor.Abort(t.Context()); err == nil {
 		t.Fatal("Abort error = nil")
 	}
@@ -207,7 +210,7 @@ func TestRollbackAgentUpgradeFilesDoesNotDowngradeBeforeSwitch(t *testing.T) {
 		t.Fatalf("Symlink last-good: %v", err)
 	}
 
-	if err := rollbackAgentUpgradeFiles(paths, &UpgradeSignal{CandidatePath: paths.BluePath}); err != nil {
+	if err := rollbackAgentUpgradeFiles(paths, &UpgradeSignal{CandidatePath: paths.BluePath}, isolation.ModeNSpawn, nil); err != nil {
 		t.Fatalf("rollbackAgentUpgradeFiles: %v", err)
 	}
 	assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
@@ -232,7 +235,7 @@ func TestRollbackAgentUpgradeFilesRetriesAfterHostLinkWasRestored(t *testing.T) 
 	err := rollbackAgentUpgradeFiles(paths, &UpgradeSignal{
 		CandidatePath:    paths.BluePath,
 		RecoveryRequired: true,
-	})
+	}, isolation.ModeNSpawn, nil)
 	if err == nil || !strings.Contains(err.Error(), "resolve last-good") {
 		t.Fatalf("rollbackAgentUpgradeFiles error = %v, want retry to resolve last-good", err)
 	}

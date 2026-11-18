@@ -6,6 +6,9 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/utils/ptr"
@@ -20,12 +23,17 @@ type testHubMachineReconciler struct {
 	intent *bool
 	worker string
 	root   string
+	actual yurthub.Worker
 	node   *corev1.Node
 }
 
-func (r *testHubMachineReconciler) Reconcile(_ context.Context, intent *bool, worker, root string, node *corev1.Node) error {
+func (r *testHubMachineReconciler) Reconcile(_ context.Context, intent *bool, worker yurthub.Worker, node *corev1.Node) error {
 	r.calls++
-	r.intent, r.worker, r.root, r.node = intent, worker, root, node
+	r.intent, r.worker, r.node = intent, worker.Scope, node
+	r.actual = worker
+	if worker.Root != nil {
+		r.root = worker.Root.Path("/")
+	}
 	return r.err
 }
 
@@ -63,12 +71,15 @@ func TestHubTranslation(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			hub := &testHubMachineReconciler{}
-			r := &repaveReconciler{hub: hub}
+			r := &repaveReconciler{hub: hub, runtime: agentruntime.NSpawn{}}
 			node := &corev1.Node{}
 			machine := &aksmachine.Machine{Goal: aksmachine.GoalState{DisconnectToleranceEnabled: tc.intent}}
 			r.reconcileHub(t.Context(), machineSnapshot{machine: machine}, nodeSnapshot{node: node}, tc.state)
 			if hub.calls != 1 || hub.intent != tc.intent || hub.worker != tc.worker || hub.root != tc.root || hub.node != node {
 				t.Fatalf("hub got calls=%d intent=%v worker=%q root=%q node=%p", hub.calls, hub.intent, hub.worker, hub.root, hub.node)
+			}
+			if tc.worker != "" && (hub.actual.Root.Slot() != tc.worker || hub.actual.Exec == nil || hub.actual.KubeletUnit != "kubelet.service" || hub.actual.Mode != isolation.ModeNSpawn) {
+				t.Fatalf("unexpected worker context: %+v", hub.actual)
 			}
 		})
 	}
@@ -177,7 +188,7 @@ type orderRecordingHub struct {
 	calls     int
 }
 
-func (h *orderRecordingHub) Reconcile(context.Context, *bool, string, string, *corev1.Node) error {
+func (h *orderRecordingHub) Reconcile(context.Context, *bool, yurthub.Worker, *corev1.Node) error {
 	h.calls++
 	h.sawStatus = h.machines.status.ProvisioningState
 	return errHubTest

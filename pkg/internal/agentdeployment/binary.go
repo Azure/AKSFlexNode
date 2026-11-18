@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -21,6 +22,7 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 // DefaultUpgradePaths returns the host-side agent upgrade layout under the
@@ -270,6 +272,7 @@ func secureInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOpt
 	if err != nil {
 		return agentbinary.InstallOptions{}, err
 	}
+
 	return agentbinary.InstallOptions{
 		DownloadURL:    rawURL,
 		ExpectedSHA256: expectedDigest,
@@ -279,11 +282,31 @@ func secureInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOpt
 	}, nil
 }
 
-func installAndSwitchBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths UpgradePaths) error {
+func installAndSwitchBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths UpgradePaths, mode isolation.Mode) error {
 	opts, err := secureInstallOptions(rawURL, expectedDigest)
 	if err != nil {
 		return err
 	}
+
+	// Agents predating the capability command can still operate nspawn.
+	if mode != isolation.ModeNSpawn {
+		opts.Check = func(ctx context.Context, path string) error {
+			return checkIsolationSupport(ctx, path, mode)
+		}
+	}
+
 	_, err = agentbinary.InstallAndSwitchFromTarGz(ctx, log, paths.Layout(), opts)
 	return err
+}
+
+func checkIsolationSupport(ctx context.Context, path string, mode isolation.Mode) error {
+	err := exec.CommandContext(ctx, path, "supports-isolation", string(mode)).Run() //nolint:gosec // SDK verified the candidate before this check
+	if err != nil {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		}
+		return fmt.Errorf("the candidate agent cannot operate isolation mode %q: %w", mode, err)
+	}
+
+	return nil
 }

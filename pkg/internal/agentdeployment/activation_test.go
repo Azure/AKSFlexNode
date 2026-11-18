@@ -27,7 +27,7 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 			return false, nil
 		},
 	}
-	plan, err := service.Preflight(t.Context(), paths.CurrentPath)
+	plan, err := service.Preflight(t.Context(), paths.CurrentPath, ServiceTargets{})
 	if err != nil {
 		t.Fatalf("Preflight: %v", err)
 	}
@@ -41,7 +41,7 @@ func TestFlexDaemonActivationPreflightUsesFlexAssetsWithoutMutation(t *testing.T
 	}
 }
 
-func TestFlexDaemonActivationLeavesInactiveResetHostStopped(t *testing.T) {
+func TestFlexDaemonActivationLeavesInactiveServiceStopped(t *testing.T) {
 	t.Parallel()
 
 	binary := filepath.Join(t.TempDir(), "candidate")
@@ -68,7 +68,7 @@ func TestFlexDaemonActivationPreflightRejectsUnknownServiceState(t *testing.T) {
 			return false, errors.New("systemd unavailable")
 		},
 	}
-	if _, err := service.Preflight(t.Context(), "/unused/current"); err == nil {
+	if _, err := service.Preflight(t.Context(), "/unused/current", ServiceTargets{}); err == nil {
 		t.Fatal("Preflight accepted an unknown service state")
 	}
 }
@@ -118,7 +118,7 @@ func TestFlexDaemonActivationPreflightRejectsAMovedHostRoot(t *testing.T) {
 				},
 			}
 
-			_, err := service.Preflight(t.Context(), paths.CurrentPath)
+			_, err := service.Preflight(t.Context(), paths.CurrentPath, ServiceTargets{})
 			if (err != nil) != (tt.wantMsg != "") {
 				t.Fatalf("Preflight() error = %v, want error %v", err, tt.wantMsg != "")
 			}
@@ -148,7 +148,7 @@ func TestFlexDaemonActivationPreflightRejectsMachineOperationSignal(t *testing.T
 			return false, nil
 		},
 	}
-	if _, err := service.Preflight(t.Context(), paths.CurrentPath); err == nil {
+	if _, err := service.Preflight(t.Context(), paths.CurrentPath, ServiceTargets{}); err == nil {
 		t.Fatal("Preflight accepted a pending MachineOperation signal")
 	}
 }

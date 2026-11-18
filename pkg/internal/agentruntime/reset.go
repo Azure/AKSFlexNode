@@ -8,36 +8,107 @@ import (
 	"os"
 
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/noneops"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 	"github.com/Azure/unbounded/pkg/agent/phases/nodestop"
 	"github.com/Azure/unbounded/pkg/agent/phases/reset"
 )
 
-// Reset returns the task that removes the node runtime from the host.
-//
-// Helpers the agent library installs under the host root, the nspawn lifecycle
-// helper and the LocalDNS network helper, are removed under the resolved host
-// root and under the legacy root, so reset does not depend on the host root
-// having been migrated. The managed agent binaries are intentionally kept.
-func (NSpawn) Reset(log *slog.Logger) phases.Task {
+type resetWorker interface {
+	Stop() phases.Task
+	Destroy() phases.Task
+}
+
+type discoveredWorker interface {
+	resetWorker
+	Present() bool
+}
+
+// ResetPlan captures runtime ownership before cleanup removes its evidence.
+// The daemon runs Stop, cleans host components, then runs Finish.
+type ResetPlan interface {
+	// HasHostNativeState reports whether SDK discovery selected native teardown.
+	HasHostNativeState() bool
+	// Stop stops every discovered worker before any teardown runs.
+	Stop() phases.Task
+	// Finish destroys the discovered workers, then cleans shared host resources.
+	Finish() phases.Task
+}
+
+type resetPlan struct {
+	log    *slog.Logger
+	nspawn resetWorker
+	none   resetWorker
+	shared phases.Task
+}
+
+func discoverReset(log *slog.Logger, nspawn resetWorker, native discoveredWorker, shared phases.Task) *resetPlan {
+	plan := &resetPlan{log: log, nspawn: nspawn, shared: shared}
+	if native.Present() {
+		plan.none = native
+	}
+
+	return plan
+}
+
+// PlanReset discovers all installed runtimes independently of applied state.
+func (NSpawn) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
+
+func (noneRuntime) PlanReset(log *slog.Logger) ResetPlan { return planReset(log) }
+
+func planReset(log *slog.Logger) ResetPlan {
+	native := &noneTeardown{
+		log: log,
+		sdk: &noneops.Teardown{Log: log},
+	}
+
+	return discoverReset(log, nspawnTeardown{log: log}, native, sharedReset(log))
+}
+
+func sharedReset(log *slog.Logger) phases.Task {
 	return phases.Serial(log,
 		phases.Parallel(log,
-			nodestop.StopNode(log, goalstates.NSpawnMachineKube1),
-			nodestop.StopNode(log, goalstates.NSpawnMachineKube2),
-		),
-		phases.Parallel(log,
-			reset.CleanupMachine(log, goalstates.NSpawnMachineKube1),
-			reset.CleanupMachine(log, goalstates.NSpawnMachineKube2),
-		),
-		phases.Parallel(log,
-			// CleanupNetwork also removes the LocalDNS unit, nft table, dummy
-			// interface and helper, which reset previously left behind.
 			reset.CleanupNetwork(log),
 			reset.RemoveWireGuardKeys(log),
 			cleanupLegacyBridgeCNI(log),
 		),
 		removeHostHelpers(log),
 		reset.ReloadSystemd(log),
+	)
+}
+
+func (p *resetPlan) HasHostNativeState() bool { return p.none != nil }
+
+func (p *resetPlan) Stop() phases.Task {
+	tasks := []phases.Task{p.nspawn.Stop()}
+	if p.none != nil {
+		tasks = append(tasks, p.none.Stop())
+	}
+	return phases.Serial(p.log, tasks...)
+}
+
+func (p *resetPlan) Finish() phases.Task {
+	tasks := []phases.Task{p.nspawn.Destroy()}
+	if p.none != nil {
+		tasks = append(tasks, p.none.Destroy())
+	}
+	tasks = append(tasks, p.shared)
+	return phases.Serial(p.log, tasks...)
+}
+
+type nspawnTeardown struct{ log *slog.Logger }
+
+func (n nspawnTeardown) Stop() phases.Task {
+	return phases.Parallel(n.log,
+		nodestop.StopNode(n.log, goalstates.NSpawnMachineKube1),
+		nodestop.StopNode(n.log, goalstates.NSpawnMachineKube2),
+	)
+}
+
+func (n nspawnTeardown) Destroy() phases.Task {
+	return phases.Parallel(n.log,
+		reset.CleanupMachine(n.log, goalstates.NSpawnMachineKube1),
+		reset.CleanupMachine(n.log, goalstates.NSpawnMachineKube2),
 	)
 }
 

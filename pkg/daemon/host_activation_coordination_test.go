@@ -14,6 +14,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 type activationStateFixture struct {
@@ -65,7 +66,7 @@ func TestInactiveActivationSkipsMissingWorker(t *testing.T) {
 	writeExecutable(t, binary, "candidate")
 	store := &activationStateFixture{states: []*State{nil}}
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
 		synchronize: func(string, string) error {
@@ -81,12 +82,40 @@ func TestInactiveActivationSkipsMissingWorker(t *testing.T) {
 	}
 }
 
+func TestNoneActivationSkipsGuestSynchronization(t *testing.T) {
+	t.Parallel()
+
+	binary := filepath.Join(t.TempDir(), "candidate")
+	writeExecutable(t, binary, "candidate")
+	store := &activationStateFixture{states: []*State{
+		{
+			Isolation:     isolation.ModeNone,
+			ActiveMachine: "kube1",
+		},
+	}}
+	coordinator := &flexDaemonActivationService{
+		hostActivationService: &agentdeployment.HostActivationService{},
+		state:                 store,
+		log:                   slog.New(slog.DiscardHandler),
+		synchronize: func(string, string) error {
+			t.Error("none activation synchronized a guest helper")
+			return nil
+		},
+	}
+	if err := coordinator.WaitHealthy(t.Context(), binary); err != nil {
+		t.Fatalf("none activation: %v", err)
+	}
+	if store.loads != 1 {
+		t.Fatalf("state loads = %d, want 1", store.loads)
+	}
+}
+
 func TestActivationHealthFailureDoesNotLoadState(t *testing.T) {
 	t.Parallel()
 
 	store := &activationStateFixture{}
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
 		synchronize: func(string, string) error {
@@ -115,7 +144,7 @@ func TestActivationPreservesEarlierHealthDeadline(t *testing.T) {
 		wantDeadline: deadline,
 	}
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
 	}
@@ -158,12 +187,12 @@ func TestActivationWorkerSyncFailureRollsBackAndReloadsState(t *testing.T) {
 	var copies []string
 	syncErr := errors.New("worker copy failed")
 	coordinator := &flexDaemonActivationService{
-		HostActivationService: &agentdeployment.HostActivationService{},
+		hostActivationService: &agentdeployment.HostActivationService{},
 		state:                 store,
 		log:                   slog.New(slog.DiscardHandler),
-		synchronize: func(path, machine string) error {
-			copies = append(copies, fmt.Sprintf("%s:%s", filepath.Base(path), machine))
-			if machine == "kube1" {
+		synchronize: func(path, destination string) error {
+			copies = append(copies, fmt.Sprintf("%s:%s", filepath.Base(path), destination))
+			if strings.Contains(destination, "/kube1/") {
 				return syncErr
 			}
 			return nil
@@ -181,7 +210,10 @@ func TestActivationWorkerSyncFailureRollsBackAndReloadsState(t *testing.T) {
 	if service.restarts != 2 || store.loads != 2 {
 		t.Fatalf("restarts = %d, state loads = %d; want 2 each", service.restarts, store.loads)
 	}
-	want := []string{filepath.Base(paths.GreenPath) + ":kube1", filepath.Base(paths.BluePath) + ":kube2"}
+	want := []string{
+		filepath.Base(paths.GreenPath) + ":/var/lib/machines/kube1/usr/local/bin/aks-flex-node",
+		filepath.Base(paths.BluePath) + ":/var/lib/machines/kube2/usr/local/bin/aks-flex-node",
+	}
 	if !slices.Equal(copies, want) {
 		t.Fatalf("worker copies = %v, want %v", copies, want)
 	}

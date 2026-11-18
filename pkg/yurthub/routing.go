@@ -6,8 +6,11 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
+	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"k8s.io/client-go/tools/clientcmd"
 )
 
@@ -33,19 +36,24 @@ After=aks-flex-yurthub.service
 Environment="KUBELET_KUBECONFIG_ARGS=` + bootstrapKubeconfigArg + ` ` + proxyKubeconfigArg + `"
 `)
 
+var directRoutingUnit = []byte(`[Service]
+Environment="KUBELET_KUBECONFIG_ARGS=` + bootstrapKubeconfigArg + ` ` + directKubeconfigArg + `"
+`)
+
 // configureRouting writes the proxy kubeconfig, then the kubelet drop-in that
 // selects it. The direct kubeconfig stays for certificate operations and disable.
 // It doesn't restart kubelet.
-func configureRouting(machineDir string) error {
-	root, err := os.OpenRoot(machineDir)
+func configureRouting(view isolation.NodeRoot, kubeletUnit string) error {
+	root, err := os.OpenRoot(view.Path("/"))
 	if err != nil {
 		return fmt.Errorf("open worker for hub routing: %w", err)
 	}
 	defer root.Close() //nolint:errcheck // directory handle
-	if err := checkRoutingOwnership(root); err != nil {
+	dropIn := routingDropInFor(kubeletUnit)
+	if err := checkRoutingOwnership(root, dropIn); err != nil {
 		return err
 	}
-	data, err := root.ReadFile(directKubeconfig)
+	data, err := readDirectKubeconfig(root, view)
 	if err != nil {
 		return fmt.Errorf("read direct kubelet config: %w", err)
 	}
@@ -84,7 +92,7 @@ func configureRouting(machineDir string) error {
 	if err := utilio.WriteFileInRoot(root, proxyKubeconfig, data, 0o600); err != nil {
 		return fmt.Errorf("write proxy kubelet config: %w", err)
 	}
-	if err := utilio.WriteFileInRoot(root, routingDropIn, routingUnit, 0o644); err != nil {
+	if err := utilio.WriteFileInRoot(root, dropIn, routingUnit, 0o644); err != nil {
 		return fmt.Errorf("write hub kubelet drop-in: %w", err)
 	}
 	return nil
@@ -92,16 +100,21 @@ func configureRouting(machineDir string) error {
 
 // restoreRouting removes the agent's kubelet drop-in and reports whether it was
 // present. It doesn't restart kubelet.
-func restoreRouting(machineDir string) (bool, error) {
-	root, err := os.OpenRoot(machineDir)
+func restoreRouting(view isolation.NodeRoot, kubeletUnit string) (bool, error) {
+	root, err := os.OpenRoot(view.Path("/"))
 	if err != nil {
 		return false, fmt.Errorf("open worker for direct routing: %w", err)
 	}
 	defer root.Close() //nolint:errcheck // directory handle
-	if err := checkRoutingOwnership(root); err != nil {
+	return restoreRoutingInRoot(root, kubeletUnit)
+}
+
+func restoreRoutingInRoot(root *os.Root, kubeletUnit string) (bool, error) {
+	dropIn := routingDropInFor(kubeletUnit)
+	if err := checkRoutingOwnership(root, dropIn); err != nil {
 		return false, err
 	}
-	err = root.Remove(routingDropIn)
+	err := root.Remove(dropIn)
 	if errors.Is(err, os.ErrNotExist) {
 		return false, nil
 	}
@@ -111,8 +124,29 @@ func restoreRouting(machineDir string) (bool, error) {
 	return true, nil
 }
 
-func checkRoutingOwnership(root *os.Root) error {
-	info, err := root.Lstat(routingDropIn)
+func validKubeletUnit(unit string) bool {
+	return unit != "" && filepath.Base(unit) == unit && !strings.ContainsAny(unit, " \t\r\n")
+}
+
+func routingDropInFor(unit string) string {
+	return filepath.Join("etc/systemd/system", unit+".d", "99-aks-flex-yurthub.conf")
+}
+
+func readDirectKubeconfig(root *os.Root, view isolation.NodeRoot) ([]byte, error) {
+	mapped := view.Path("/" + directKubeconfig)
+	if mapped == filepath.Join(view.Path("/"), directKubeconfig) {
+		return root.ReadFile(directKubeconfig)
+	}
+	kubelet, err := os.OpenRoot(view.Path("/var/lib/kubelet"))
+	if err != nil {
+		return nil, err
+	}
+	defer kubelet.Close() //nolint:errcheck // directory handle
+	return kubelet.ReadFile("kubeconfig")
+}
+
+func checkRoutingOwnership(root *os.Root, dropIn string) error {
+	info, err := root.Lstat(dropIn)
 	if errors.Is(err, os.ErrNotExist) {
 		return nil
 	}
@@ -122,11 +156,11 @@ func checkRoutingOwnership(root *os.Root) error {
 	if !info.Mode().IsRegular() {
 		return fmt.Errorf("hub routing override is not a regular file")
 	}
-	data, err := root.ReadFile(routingDropIn)
+	data, err := root.ReadFile(dropIn)
 	if err != nil {
 		return fmt.Errorf("read hub routing override: %w", err)
 	}
-	if !bytes.Equal(data, routingUnit) {
+	if !bytes.Equal(data, routingUnit) && !bytes.Equal(data, directRoutingUnit) {
 		return fmt.Errorf("hub routing override has conflicting contents")
 	}
 	return nil

@@ -28,6 +28,14 @@ func TestInstallServiceRunsTheImageInAContainer(t *testing.T) {
 func TestContainerServiceUnitRunsTheDaemonFromTheImage(t *testing.T) {
 	t.Parallel()
 
+	want, err := os.ReadFile(filepath.Join("testdata", "aks-flex-node-agent-container.service.golden"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(containerServiceUnitContent, want) {
+		t.Errorf("container service unit mismatch (-want +got):\n--- want ---\n%s\n--- got ---\n%s", want, containerServiceUnitContent)
+	}
+
 	unit := string(containerServiceUnitContent)
 	for _, want := range []string{
 		"EnvironmentFile=/etc/sysconfig/aks-flex-node-container",
@@ -270,7 +278,7 @@ func TestContainerNSpawnLifecycleUnits(t *testing.T) {
 func TestDaemonUnitsWantMachinesTarget(t *testing.T) {
 	t.Parallel()
 
-	hostUnit, err := renderAgentServiceUnit("/usr/local/bin/aks-flex-node", agentServiceOptions{})
+	hostUnit, err := renderAgentServiceUnit("/usr/local/bin/aks-flex-node", ServiceTargetsFromConfig(&config.Config{}, config.DefaultIsolationMode))
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -15,9 +15,12 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -31,7 +34,7 @@ type machineOperationReconcilerOptions struct {
 	NodeName             string
 	AKSMachineName       string
 	MachineOperationMode string
-	Runtime              workerRuntime
+	Runtime              agentruntime.Runtime
 	State                stateStore
 	Config               *config.Config
 	Uninstall            func(*slog.Logger) phases.Task
@@ -42,7 +45,7 @@ type machineOperationReconcilerOptions struct {
 
 type machineOperationHandlers struct {
 	log          *slog.Logger
-	runtime      workerRuntime
+	runtime      agentruntime.Runtime
 	state        stateStore
 	cfg          *config.Config
 	resolve      machineGoalResolver
@@ -160,7 +163,7 @@ func (h *machineOperationHandlers) reconcileNodeReboot(
 	store daemon.MachineOperationStore[int64],
 	op daemon.MachineOperation,
 ) (ctrl.Result, error) {
-	if err := store.MarkInProgress(ctx, op, "restarting active nspawn node"); err != nil {
+	if err := store.MarkInProgress(ctx, op, "restarting active worker node"); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark NodeReboot MachineOperation in progress: %w", err)
 	}
 	if err := h.restartNode(ctx); err != nil {
@@ -190,14 +193,25 @@ func (h *machineOperationHandlers) restartNode(ctx context.Context) error {
 		return err
 	}
 	cfg := h.cfg.DeepCopy()
-	if active.State.AppliedKubernetesVersion != "" {
-		cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
+	input := agentruntime.Inputs{
+		Config: cfg,
+		Node: agentruntime.Node{
+			Slot:   active.Name,
+			Config: active.State.NodeConfig,
+		},
 	}
-	resolved, err := h.resolve(ctx, h.log, cfg, active.Name)
-	if err != nil {
-		return fmt.Errorf("resolve goal state for node restart: %w", err)
+	if active.State.Isolation != isolation.ModeNone {
+		if active.State.AppliedKubernetesVersion != "" {
+			cfg.Components.Kubernetes = active.State.AppliedKubernetesVersion
+		}
+		resolved, err := h.resolve(ctx, h.log, cfg, active.Name)
+		if err != nil {
+			return fmt.Errorf("resolve goal state for node restart: %w", err)
+		}
+		input.Node.GoalState = resolved.GoalState
+		input.Archives = resolved.ContainerImageArchives
 	}
-	return h.runtime.Restart(cfg, h.log, active.Name, resolved.GoalState, resolved.ContainerImageArchives).Do(ctx)
+	return h.runtime.Restart(h.log, input).Do(ctx)
 }
 
 func (h *machineOperationHandlers) reconcileAgentUpgrade(
@@ -299,11 +313,11 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 	if err := store.MarkInProgress(
 		ctx,
 		op,
-		"resetting local nspawn node runtime",
+		"resetting local worker runtime",
 	); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark AgentReset MachineOperation in progress: %w", err)
 	}
-	if err := phases.ExecuteTask(ctx, h.log, h.runtime.Reset(h.log)); err != nil {
+	if err := phases.ExecuteTask(ctx, h.log, ResetWorker(h.log, h.runtime, yurthub.ResetHostTask(h.log))); err != nil {
 		return h.finishFailedMachineOperation(
 			ctx,
 			store,
