@@ -335,17 +335,6 @@ func containerTeardown(teardown *containerops.Teardown) phases.Task {
 	})
 }
 
-// ContainerUpgradeArtifactPresent detects an interrupted SDK upgrade snapshot.
-func ContainerUpgradeArtifactPresent() (bool, error) {
-	path := filepath.Join(goalstates.AgentConfigDir, containerUpgradeSnapshot)
-	if _, err := os.Lstat(path); err == nil {
-		return true, nil
-	} else if !errors.Is(err, os.ErrNotExist) {
-		return false, fmt.Errorf("inspect OCI upgrade artifact %s: %w", path, err)
-	}
-	return false, nil
-}
-
 // CleanupContainerUpgradeArtifact removes an orphaned snapshot without touching worker paths.
 func CleanupContainerUpgradeArtifact() phases.Task {
 	return hostnode.Func("remove-oci-upgrade-artifact", func(context.Context) error {
