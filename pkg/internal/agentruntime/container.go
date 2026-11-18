@@ -70,7 +70,7 @@ func containerArtifacts(ctx context.Context, log *slog.Logger, cfg *config.Confi
 
 // Upgrade owns preparation and activation, so install guest artifacts in its
 // unpack hook before it can start kubelet.
-func bindContainerArtifacts(node *containerops.Node, log *slog.Logger, cfg *config.Config) (*goalstates.MachineGoalState, error) {
+func bindContainerArtifacts(node *containerops.Node, log *slog.Logger, cfg *config.Config, materialized *bool) (*goalstates.MachineGoalState, error) {
 	gs, err := node.GoalState()
 	if err != nil {
 		return nil, err
@@ -78,9 +78,14 @@ func bindContainerArtifacts(node *containerops.Node, log *slog.Logger, cfg *conf
 	backend := node.Backend()
 	unpack := backend.Unpack
 	backend.Unpack = func(ctx context.Context, spec isolation.NodeSpec, dir string) error {
-		if err := unpack(ctx, spec, dir); err != nil {
+		err := unpack(ctx, spec, dir)
+		// An early snapshot failure never reaches unpack and cannot establish
+		// ownership of an otherwise unowned bpffs-only target.
+		*materialized = err == nil || backend.SlotExists(spec.Slot)
+		if err != nil {
 			return err
 		}
+
 		return containerArtifacts(ctx, log, cfg, gs)
 	}
 	return gs, nil
@@ -98,12 +103,15 @@ func (r containerRuntime) Start(log *slog.Logger, input Inputs) phases.Task {
 			return fmt.Errorf("stage container image archives: %w", err)
 		}
 		if input.Previous != nil {
-			gs, err := bindContainerArtifacts(node, log, input.Config)
+			slot := containerSlot(input.Node.Slot)
+			owned := node.Backend().SlotExists(slot)
+			materialized := false
+			gs, err := bindContainerArtifacts(node, log, input.Config, &materialized)
 			if err != nil {
 				return err
 			}
-			slot := containerSlot(input.Node.Slot)
-			if slot != containerSlot(input.Previous.Slot) && node.Backend().SlotExists(slot) {
+
+			if slot != containerSlot(input.Previous.Slot) && owned {
 				// SDK Upgrade also checks this, but its internal Destroy can erase
 				// the trace before returning an error. Retain it on every failure.
 				if err := node.Destroy(ctx); err != nil {
@@ -111,9 +119,11 @@ func (r containerRuntime) Start(log *slog.Logger, input Inputs) phases.Task {
 						errors.Join(err, retainContainerSlot(node.Backend(), slot)))
 				}
 			}
+
 			if err := node.Upgrade(ctx, r.node(log, *input.Previous)); err != nil {
-				// Upgrade may also destroy the target during abandon or rollback.
-				if slot != containerSlot(input.Previous.Slot) {
+				// Abandon/rollback can erase a trace created during this upgrade.
+				// A bpffs path alone does not establish target ownership.
+				if slot != containerSlot(input.Previous.Slot) && (owned || materialized) {
 					err = errors.Join(err, retainContainerBPFFSSlot(node.Backend(), slot))
 				}
 				return fmt.Errorf("upgrade OCI worker: %w", err)
@@ -192,8 +202,10 @@ func RewriteContainerHostRoot(ctx context.Context, log *slog.Logger, input Node)
 func (r containerRuntime) Retire(log *slog.Logger, input Inputs) phases.Task {
 	return hostnode.Func("retire-oci-worker", func(ctx context.Context) error {
 		node := r.node(log, *input.Previous)
+
 		if err := node.Destroy(ctx); err != nil {
 			log.Warn("could not remove superseded OCI slot; next repave retries", "error", err)
+
 			if keepErr := retainContainerSlot(node.Backend(), containerSlot(input.Previous.Slot)); keepErr != nil {
 				return errors.Join(err, keepErr)
 			}
@@ -221,6 +233,7 @@ func retainContainerSlot(backend *container.Backend, slot string) error {
 	if err := os.MkdirAll(backend.Layout.RootfsDir(slot), 0o750); err != nil {
 		return fmt.Errorf("retain OCI slot %s ownership: %w", slot, err)
 	}
+
 	return nil
 }
 

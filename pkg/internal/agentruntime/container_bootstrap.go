@@ -14,6 +14,7 @@ func (containerRuntime) ValidateBootstrap(ctx context.Context, log *slog.Logger,
 	if err != nil {
 		return err
 	}
+
 	return validateContainerBootstrap(ctx, log, installed, artifacts, host.EnsureNoExistingDeploymentFor)
 }
 
@@ -24,9 +25,11 @@ func validateContainerBootstrap(ctx context.Context, log *slog.Logger, installed
 	if !installed && artifacts.oci {
 		return fmt.Errorf("OCI worker has no applied state; reset before bootstrap")
 	}
+
 	if installed {
 		// An installed OCI worker owns its bpffs paths; they are not conflicts.
 		return nil
 	}
+
 	return ensureClean(ctx, log, isolation.ModeNSpawn)
 }

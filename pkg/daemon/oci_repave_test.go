@@ -85,6 +85,9 @@ func TestOCIRepaveSavesAlternateSlotBeforeRetire(t *testing.T) {
 					ActiveMachine: "kube1",
 					NodeConfig: &agentconfig.AgentConfig{
 						Isolation: "container",
+						Experimental: &agentconfig.ExperimentalConfig{
+							ContainerIsolation: true,
+						},
 						Cluster: agentconfig.AgentClusterConfig{
 							Version: "1.34.0",
 						},
@@ -97,10 +100,14 @@ func TestOCIRepaveSavesAlternateSlotBeforeRetire(t *testing.T) {
 			r.runtime = &ociRepaveRuntime{events: &events}
 			r.state = store
 			r.cfg.Bootstrap.Isolation = isolation.ModeContainer
+			r.cfg.Bootstrap.Experimental = &config.ExperimentalConfig{ContainerIsolation: true}
 			r.resolve = func(_ context.Context, _ *slog.Logger, _ *config.Config, _ string) (config.ResolvedMachineGoal, error) {
 				return config.ResolvedMachineGoal{
 					AgentConfig: &agentconfig.AgentConfig{
 						Isolation: "container",
+						Experimental: &agentconfig.ExperimentalConfig{
+							ContainerIsolation: true,
+						},
 						Cluster: agentconfig.AgentClusterConfig{
 							Version: "1.35.0",
 						},

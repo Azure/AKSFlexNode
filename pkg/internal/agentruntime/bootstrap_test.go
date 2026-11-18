@@ -109,7 +109,10 @@ func TestBootstrapArtifactConflicts(t *testing.T) {
 			case isolation.ModeContainer:
 				err = validateContainerBootstrap(t.Context(), log, tc.installed, tc.artifacts, ensureClean)
 			}
-			if (tc.wantErr == "" && err != nil) || (tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr))) {
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("unexpected artifact validation error: %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("artifact validation error = %v, want %q", err, tc.wantErr)
 			}
 			if calls != 0 {
@@ -183,16 +186,10 @@ func TestBootstrapCleanHostGuard(t *testing.T) {
 			wantErr:   "artifact cannot be inspected",
 		},
 		{
-			name:      "installed OCI kube1",
+			name:      "installed OCI owns its bpffs",
 			mode:      isolation.ModeContainer,
 			installed: true,
-			cleanErr:  errors.New("owned bpffs mount path /run/bpffs/kube1"),
-		},
-		{
-			name:      "installed OCI kube2",
-			mode:      isolation.ModeContainer,
-			installed: true,
-			cleanErr:  errors.New("owned bpffs mount path /run/bpffs/kube2"),
+			cleanErr:  errors.New("owned bpffs mount path"),
 		},
 		{
 			name:      "none still checks clean host",
@@ -222,7 +219,10 @@ func TestBootstrapCleanHostGuard(t *testing.T) {
 			} else {
 				err = validateNoneBootstrap(t.Context(), log, tc.installed, bootstrapArtifacts{}, none.NewDefault(log), ensureClean)
 			}
-			if (tc.wantErr == "" && err != nil) || (tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr))) {
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("validation error = %v, want %q", err, tc.wantErr)
 			}
 			wantCalls := 0

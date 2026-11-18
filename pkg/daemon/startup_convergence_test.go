@@ -63,7 +63,10 @@ func TestValidateStartupState(t *testing.T) {
 			t.Parallel()
 
 			err := validateStartupState(tc.mode, tc.applied)
-			if (tc.wantErr == "" && err != nil) || (tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr))) {
+			if tc.wantErr == "" && err != nil {
+				t.Fatalf("unexpected validation error: %v", err)
+			}
+			if tc.wantErr != "" && (err == nil || !strings.Contains(err.Error(), tc.wantErr)) {
 				t.Fatalf("validation error = %v, want %q", err, tc.wantErr)
 			}
 		})
@@ -94,7 +97,9 @@ func TestRecoverStartupWorkerUsesAppliedState(t *testing.T) {
 			t.Parallel()
 
 			cfg := &config.Config{
-				Bootstrap: config.BootstrapConfig{Isolation: mode},
+				Bootstrap: config.BootstrapConfig{
+					Isolation: mode,
+				},
 			}
 			appliedConfig := &agentconfig.AgentConfig{}
 			applied := &State{ActiveMachine: "kube2", NodeConfig: appliedConfig}
@@ -119,7 +124,9 @@ func TestRecoverStartupWorkerPropagatesFailure(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
-		Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNone},
+		Bootstrap: config.BootstrapConfig{
+			Isolation: isolation.ModeNone,
+		},
 	}
 	worker := &startupRecoveryRuntime{err: errors.New("recovery failed")}
 	err := recoverStartupWorker(t.Context(), cfg, discardLogger(), worker, &State{})
