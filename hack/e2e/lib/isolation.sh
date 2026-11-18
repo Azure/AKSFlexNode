@@ -360,6 +360,7 @@ case "$1" in
 esac
 [[ ! -e /var/lib/kubelet/kubeconfig ]]
 [[ ! -e /etc/aks-flex-node/daemon-state.json ]]
+[[ ! -e /etc/unbounded/agent && ! -L /etc/unbounded/agent ]]
 [[ -x /opt/unbounded/agent/bin/aks-flex-node ]]
 REMOTE
 }
