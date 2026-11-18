@@ -11,6 +11,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -24,7 +25,7 @@ func NewCommand() *cobra.Command {
 			log := logger.CreateLogger("info", "")
 			return runReset(cmd.Context(), log,
 				agentdeployment.UninstallService(log),
-				daemon.ResetWorker(log, agentruntime.NSpawn{}, daemon.ResetHostHub(log)),
+				daemon.ResetWorker(log, agentruntime.NSpawn{}, yurthub.ResetHostTask(log)),
 				config.RemoveRuntimeDirs(log),
 			)
 		},

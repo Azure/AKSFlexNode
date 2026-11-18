@@ -20,13 +20,6 @@ func hubWorker(scope string, worker agentruntime.WorkerContext) yurthub.Worker {
 	}
 }
 
-// ResetHostHub clears host Hub state before none teardown or identity replacement.
-func ResetHostHub(log *slog.Logger) phases.Task {
-	return hostnode.Func("reset-host-hub", func(ctx context.Context) error {
-		return yurthub.ResetHost(ctx, hubWorker("", agentruntime.NoneHost(log)))
-	})
-}
-
 // ResetWorker discovers ownership at execution time, after CLI daemon shutdown.
 func ResetWorker(log *slog.Logger, worker agentruntime.Runtime, hostHub phases.Task) phases.Task {
 	return hostnode.Func("reset-worker", func(ctx context.Context) error {

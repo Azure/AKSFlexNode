@@ -15,6 +15,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.T) {
@@ -363,23 +364,55 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		cfg    config.Config
-		golden string
+		cfg         config.Config
+		appliedMode isolation.Mode
+		golden      string
 	}{
-		"default": {golden: "aks-flex-node-agent.service.golden"},
-		"Arc": {
+		"nspawn without ARC": {
+			appliedMode: isolation.ModeNSpawn,
+			golden:      "aks-flex-node-agent.service.golden",
+		},
+		"nspawn with ARC": {
 			cfg: config.Config{
 				Azure: config.AzureConfig{
-					Arc: &config.ArcConfig{Enabled: true},
+					Arc: &config.ArcConfig{
+						Enabled: true,
+					},
 				},
 			},
-			golden: "aks-flex-node-agent-arc.service.golden",
+			appliedMode: isolation.ModeNSpawn,
+			golden:      "aks-flex-node-agent-arc.service.golden",
+		},
+		// Applied isolation can differ from the desired bootstrap configuration.
+		"none without ARC": {
+			cfg: config.Config{
+				Bootstrap: config.BootstrapConfig{
+					Isolation: isolation.ModeNSpawn,
+				},
+			},
+			appliedMode: isolation.ModeNone,
+			golden:      "aks-flex-node-agent-none.service.golden",
+		},
+		"none with ARC": {
+			cfg: config.Config{
+				Bootstrap: config.BootstrapConfig{
+					Isolation: isolation.ModeNSpawn,
+				},
+				Azure: config.AzureConfig{
+					Arc: &config.ArcConfig{
+						Enabled: true,
+					},
+				},
+			},
+			appliedMode: isolation.ModeNone,
+			golden:      "aks-flex-node-agent-none-arc.service.golden",
 		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			targets := ServiceTargetsFromConfig(&tt.cfg, config.DefaultIsolationMode)
+
+			targets := ServiceTargetsFromConfig(&tt.cfg, tt.appliedMode)
 			got, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, targets)
 			if err != nil {
 				t.Fatalf("renderAgentServiceUnit() error = %v", err)
