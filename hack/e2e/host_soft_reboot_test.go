@@ -22,6 +22,7 @@ func TestHostSoftReboot(t *testing.T) {
 			{name: "same-agent", want: "did not produce a new host boot"},
 			{name: "operation-failed", want: "did not reach Complete"},
 			{name: "wrong-phase", want: "expected target boot ID"},
+			{name: "unfinished-target", want: "expected target boot ID"},
 			{name: "missing-target", want: "expected target boot ID"},
 			{name: "wrong-machine", want: "expected target boot ID"},
 			{name: "wrong-boot", want: "expected target boot ID"},
@@ -125,12 +126,14 @@ kubectl() {
     get:machineoperation)
       [[ -e "$ROOT/waited" ]]
       phase=Complete
+      target_phase=Complete
       target=node
       boot=oldboot
       reason=Succeeded
       completed=1970-01-01T00:03:21Z
       case "$SCENARIO" in
         wrong-phase) phase=InProgress ;;
+        unfinished-target) target_phase=InProgress ;;
         wrong-machine) target=other ;;
         wrong-boot) boot=other ;;
         wrong-reason) reason=Failed ;;
@@ -140,8 +143,8 @@ kubectl() {
       if [[ "$SCENARIO" == missing-target ]]; then
         target=''
       fi
-      jq -n --arg phase "$phase" --arg target "$target" --arg boot "$boot" --arg reason "$reason" --arg completed "$completed" \
-        '{status:{phase:$phase,completedAt:$completed,targets:(if $target == "" then [] else [{machineRef:$target,bootID:$boot}] end),conditions:[{type:"Completed",status:"True",reason:$reason}],message:"fixture-secret"}}'
+      jq -n --arg phase "$phase" --arg target_phase "$target_phase" --arg target "$target" --arg boot "$boot" --arg reason "$reason" --arg completed "$completed" \
+        '{status:{phase:$phase,completedAt:$completed,targets:(if $target == "" then [] else [{machineRef:$target,bootID:$boot,phase:$target_phase}] end),conditions:[{type:"Completed",status:"True",reason:$reason}],message:"fixture-secret"}}'
       ;;
     *) echo "unexpected kubectl call" >&2; return 1 ;;
   esac

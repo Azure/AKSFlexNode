@@ -411,7 +411,7 @@ EOF
   status="$(kubectl get machineoperation "${operation}" --request-timeout=15s -o json)"
   if ! jq -e --arg machine "${vm_name}" --arg boot "${boot}" '
     .status.phase == "Complete"
-    and any(.status.targets[]?; .machineRef == $machine and .bootID == $boot)
+    and any(.status.targets[]?; .machineRef == $machine and .bootID == $boot and .phase == "Complete")
     and any(.status.conditions[]?; .type == "Completed" and .status == "True" and .reason == "Succeeded")
   ' <<<"${status}" >/dev/null; then
     log_error "HostSoftReboot result lacks the expected target boot ID or success condition"
