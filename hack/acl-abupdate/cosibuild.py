@@ -13,6 +13,8 @@ module does the rest around it:
   Customizer would write slot A's arguments into an addon of its own, wrong for the update slot.
   The patched addons aren't signed, so a build boots only with Secure Boot off.
 - The new COSI is the source's, with those three regions replaced and metadata.json updated.
+- The build gets its own OS version, as a new release of ACL would: os-release's VERSION_ID, and
+  the VERSION, PRETTY_NAME, and CPE_NAME that repeat it, become the request's os_version.
 
 The new root hash is checked by recomputing the verity hash tree, and Image Customizer's boot
 partition is compared with the source's, so a config that changes the kernel command line, the
@@ -141,10 +143,35 @@ def label_script(paths: list[str]) -> str:
     ]) + "\n"
 
 
-def ic_config(files: list[FileEntry], base_config: str | None) -> dict[str, Any]:
+def os_version_script(old: str, new: str) -> str:
+    """A script that puts new in place of old, the source's VERSION_ID, wherever os-release has it. It
+    follows /etc/os-release to the file it points to, and writes over each file rather than replacing
+    it, so the file keeps its SELinux label. It fails unless /etc/os-release then has VERSION_ID new."""
+    pattern = re.sub(r"([.\[\]*^$\\/])", r"\\\1", old)
+    return "\n".join([
+        "set -eu",
+        f"old={shlex.quote(old)} new={shlex.quote(new)} seen=''",
+        "for file in /etc/os-release /usr/lib/os-release; do",
+        '  [ -e "$file" ] || continue',
+        '  file=$(realpath "$file")',
+        "  # On ACL, /etc/os-release points to /usr/lib/os-release; new starts with old, so a second",
+        "  # pass over one file would change it again.",
+        '  case " $seen " in *" $file "*) continue ;; esac',
+        '  seen="$seen $file"',
+        '  grep -qF "$old" "$file" || continue',
+        f'  content=$(sed {shlex.quote(f"s/{pattern}/{new}/g")} "$file")',
+        "  printf '%s\\n' \"$content\" > \"$file\"",
+        "done",
+        'grep -qxF "VERSION_ID=$new" /etc/os-release || grep -qxF "VERSION_ID=\\"$new\\"" /etc/os-release',
+    ]) + "\n"
+
+
+def ic_config(files: list[FileEntry], base_config: str | None,
+              os_version: tuple[str, str] | None = None) -> dict[str, Any]:
     """Image Customizer's config: re-seal /usr's verity, modify only UKI addons, pass the package
-    manifest through, add the files with their modes, and label /etc's. A --config is its base
-    config, so its files and scripts are applied first, and these settings take precedence."""
+    manifest through, add the files with their modes, label /etc's, and change os-release's version
+    from os_version's first to its second. A --config is its base config, so its files and scripts
+    are applied first, and these settings take precedence."""
     config: dict[str, Any] = {
         "previewFeatures": PREVIEW_FEATURES + (["base-configs"] if base_config else []),
         "storage": {"reinitializeVerity": "all"},
@@ -156,9 +183,14 @@ def ic_config(files: list[FileEntry], base_config: str | None) -> dict[str, Any]
         config["os"]["additionalFiles"] = [
             {"source": f"{FILES_MOUNT}/{entry.relative}", "destination": entry.destination,
              "permissions": f"{entry.mode:o}"} for entry in files]
+    scripts = []
+    if os_version:
+        scripts.append({"name": "set-os-version", "content": os_version_script(*os_version)})
     etc = [entry.destination for entry in files if entry.destination.startswith("/etc/")]
     if etc:
-        config["scripts"] = {"postCustomization": [{"name": "label-etc-files", "content": label_script(etc)}]}
+        scripts.append({"name": "label-etc-files", "content": label_script(etc)})
+    if scripts:
+        config["scripts"] = {"postCustomization": scripts}
     return config
 
 
@@ -470,10 +502,22 @@ def region_images(metadata: dict[str, Any]) -> list[dict[str, Any]]:
     return images
 
 
+def os_release_value(text: str, key: str) -> str:
+    """key's value in os-release text, unquoted, or ""."""
+    for line in text.splitlines():
+        name, _, value = line.strip().partition("=")
+        if name == key:
+            return value.strip().strip("'\"")
+    return ""
+
+
 def rewrite_metadata(metadata: dict[str, Any], replaced: dict[str, dict[str, Any]], roothash: str, fs_uuid: str,
-                     image_id: str) -> dict[str, Any]:
-    """The source's metadata.json for the new regions, root hash, /usr filesystem UUID, and ID."""
+                     image_id: str, os_version: tuple[str, str] | None = None) -> dict[str, Any]:
+    """The source's metadata.json for the new regions, root hash, /usr filesystem UUID, ID, and OS
+    version."""
     result = copy.deepcopy(metadata)
+    if os_version and "osRelease" in result:
+        result["osRelease"] = str(result["osRelease"]).replace(*os_version)
     old = usr_image(result)["verity"]["roothash"]
     for image in region_images(result):
         if image["path"] in replaced:
@@ -542,6 +586,8 @@ class Request:
     work: Path
     output: Path
     keep_work: bool = False
+    # The VERSION_ID the build gets in place of its source's; empty keeps the source's.
+    os_version: str = ""
 
 
 @dataclasses.dataclass
@@ -669,6 +715,14 @@ def _build(request: Request, log: Log) -> dict[str, Any]:
     source_roothash = usr_entry["verity"]["roothash"]
     log(f"expanded {request.source.name} into a raw disk in {_since(started)}")
 
+    os_version = None
+    source_version = os_release_value(str(metadata.get("osRelease", "")), "VERSION_ID")
+    if request.os_version and source_version:
+        os_version = (source_version, request.os_version)
+        log(f"the build's OS version is {request.os_version}, its source's {source_version}")
+    elif request.os_version:
+        log(f"{request.source.name}'s metadata has no VERSION_ID, so the build keeps its os-release")
+
     # A new filesystem UUID for /usr, as the image tools' own ACL builds do: each slot's /usr then
     # has its own, even though the update's is built from the base's.
     fs_uuid = str(uuid.uuid4())
@@ -692,7 +746,7 @@ def _build(request: Request, log: Log) -> dict[str, Any]:
         mounts.append((request.config.resolve().parent, f"{CONFIG_MOUNT}:ro"))
         reference = f"{CONFIG_MOUNT}/{request.config.name}"
     config_path = request.output.parent / "image-customizer.json"
-    config_path.write_text(json.dumps(ic_config(request.files, reference), indent=2) + "\n")
+    config_path.write_text(json.dumps(ic_config(request.files, reference, os_version), indent=2) + "\n")
     shutil.copy2(config_path, work / "config.json")
     ic_log = request.output.parent / "image-customizer.log"
     log(f"running Image Customizer ({request.image_customizer.split('@')[0]}); its log is {ic_log}")
@@ -752,11 +806,12 @@ def _build(request: Request, log: Log) -> dict[str, Any]:
         compressed[path] = target
         region.unlink()
     image_id = str(uuid.uuid4())
-    new_metadata = rewrite_metadata(metadata, described, roothash, fs_uuid, image_id)
+    new_metadata = rewrite_metadata(metadata, described, roothash, fs_uuid, image_id, os_version)
     write_cosi(request.source, request.output, json.dumps(new_metadata, indent=2).encode(), compressed)
     check_cosi(request.output)
     log(f"wrote {request.output.name} in {_since(started)}")
     return {"roothash": roothash, "fsUuid": fs_uuid, "id": image_id, "sourceRoothash": source_roothash,
+            "osVersion": os_version[1] if os_version else source_version,
             "patched": patched, "files": [entry.destination for entry in request.files],
             "imageCustomizer": request.image_customizer}
 

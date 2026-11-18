@@ -883,6 +883,17 @@ def build_version(name: str, source: Image, previous: Image | None) -> tuple[str
     return f"{core}-{name}.{count}", count
 
 
+def build_os_version(name: str, source: Image, count: int) -> str:
+    """The VERSION_ID a build gets in os-release: its source's, with -NAME.N as in build_version, so
+    an update to the build changes the OS version, as one to a new release of ACL does. Empty when
+    the source has no semver VERSION_ID, and the build keeps its source's os-release."""
+    import omaha
+
+    release = source.info.get("osRelease") or {}
+    core = re.split(r"[-+]", str(release.get("VERSION_ID", "")), maxsplit=1)[0]
+    return f"{core}-{name}.{count}" if omaha.is_semver(core) else ""
+
+
 def known_cosis() -> list[Image]:
     """The COSIs the harness has seen: the cache's, builds, and local ones, to name the booted image."""
     images: list[Image] = []
@@ -3629,6 +3640,7 @@ def image_build(args: argparse.Namespace) -> None:
     previous = build_image(name)
     version, count = build_version(name, source, previous)
     version = args.version or version
+    os_version = build_os_version(name, source, count)
 
     BUILDS.mkdir(parents=True, exist_ok=True)
     partial = BUILDS / f"{name}.partial"
@@ -3643,7 +3655,7 @@ def image_build(args: argparse.Namespace) -> None:
     started = time.monotonic()
     request = cosibuild.Request(source=source.path, files_dir=files_dir, files=files, config=config,
                                 image_customizer=IMAGE_CUSTOMIZER, work=BUILDS / f"{name}.work",
-                                output=partial / f"{name}.cosi", keep_work=args.keep_work)
+                                output=partial / f"{name}.cosi", keep_work=args.keep_work, os_version=os_version)
     try:
         result = cosibuild.build(request, log)
     except StepError as error:

@@ -217,6 +217,12 @@ Building needs no VM. Once built, every command and scenario that takes a
 target takes the build's name, as in `run annotation-update --from base --to
 hello` in cluster mode.
 
+A build gets its own OS version, as a new release of ACL does: its
+os-release's `VERSION_ID` is its source's with `-NAME.N`, such as
+`3.0.20261104-hello.1`, the suffix its offered version has too. So
+`/etc/os-release` changes after an update to it, as after one to a newer
+release.
+
 | Option | |
 |---|---|
 | `--files DIR` | Files to add, laid out like the root: `usr/...` goes in `/usr`, and `etc/...` in `/etc`. Each keeps its mode and is owned by root, and new `/etc` files get their SELinux label from the image's policy. Other top-level directories, symlinks, and special files are refused, with the reason: `opt/`, `var/`, and `home/`, for example, are on the root partition, which both slots share and an update doesn't write. |
@@ -259,14 +265,17 @@ know ACL's A/B layout, so the harness does the rest:
 1. It expands the source COSI into a sparse raw disk, since Image Customizer
    takes a disk, and gives `/usr` a new btrfs filesystem UUID, so the two slots
    don't carry the same filesystem.
-2. Of Image Customizer's output, it keeps `/usr` and its hash partition, and
+2. It gives os-release the build's `VERSION_ID` in place of its source's, with
+   a script Image Customizer runs. The script writes over the file rather than
+   replacing it, so the file keeps its SELinux label.
+3. Of Image Customizer's output, it keeps `/usr` and its hash partition, and
    checks the new root hash by recomputing the hash tree.
-3. It keeps the source's boot partition, and patches the new root hash into the
+4. It keeps the source's boot partition, and patches the new root hash into the
    UKI addons that carry `usrhash=`: both slots' templates in
    `/acl/uki-addons`, and the UKI's own. Image Customizer would give the update
    slot an addon with slot A's arguments.
-4. It repacks the source COSI with those three partitions replaced and its
-   `metadata.json` updated.
+5. It repacks the source COSI with those three partitions replaced and its
+   `metadata.json` updated, including its OS version.
 
 The limits that follow:
 
@@ -605,8 +614,10 @@ boots' journals, `trident get status` and `last-error`, the trident units,
   look like a rollback.
 - **Trident's datastore:** a freshly installed image has no Host Status until
   its first update, so `status` shows none, and `trident get status` fails.
-- **Tags:** a build tag isn't the OS's `VERSION_ID`. Two builds can carry the
-  same OS release, so an unchanged `/etc/os-release` doesn't mean an update
-  failed; the root hash shows which image runs.
+- **Tags:** a build tag isn't the OS's `VERSION_ID`: build 20261105.1 has
+  `3.0.20261104`. The installer ISO's image and its build's COSI have the same
+  `VERSION_ID` but different `/usr` root hashes, so an update from one to the
+  other leaves `/etc/os-release` as it was. The root hash shows which image
+  runs.
 - **Disk space in the VM:** COSIs are kept in `ACL_AB_GUEST_DIR` while there's
   room for the next one, so pingpong copies each only once.

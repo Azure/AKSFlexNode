@@ -640,6 +640,16 @@ class BuildTest(unittest.TestCase):
         unversioned = abupdate.Image("custom.cosi", Path("/custom.cosi"), "cosi", {})
         self.assertEqual(abupdate.build_version("x", unversioned, None), ("0.0.0-x.1", 1))
 
+    def test_os_versions(self) -> None:
+        tagged = abupdate.Image("20261105.1", Path("/a.cosi"), "cosi", {"osRelease": {"VERSION_ID": "3.0.20261104"}})
+        self.assertEqual(abupdate.build_os_version("hello", tagged, 1), "3.0.20261104-hello.1")
+        # A build on a build keeps the first's core version.
+        built = abupdate.Image("hello", Path("/b.cosi"), "cosi", {"osRelease": {"VERSION_ID": "3.0.20261104-hello.2"}})
+        self.assertEqual(abupdate.build_os_version("world", built, 1), "3.0.20261104-world.1")
+        for release in ({}, {"VERSION_ID": "3.0"}):
+            unversioned = abupdate.Image("custom.cosi", Path("/c.cosi"), "cosi", {"osRelease": release})
+            self.assertEqual(abupdate.build_os_version("x", unversioned, 1), "", release)
+
     def test_a_build_is_a_target(self) -> None:
         roothash = "cd" * 32
         image = self.add_build("hello", roothash, "20261105.1.0-hello.1")

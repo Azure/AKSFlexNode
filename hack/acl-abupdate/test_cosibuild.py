@@ -130,6 +130,57 @@ class ConfigTest(unittest.TestCase):
         self.assertNotIn("/usr/bin/hello", script)
         self.assertEqual(subprocess.run(["sh", "-n"], input=script, text=True, check=False).returncode, 0)
 
+    def test_os_version(self) -> None:
+        config = cosibuild.ic_config(self.FILES, None, ("3.0.20261104", "3.0.20261104-hello.1"))
+        scripts = config["scripts"]["postCustomization"]
+        self.assertEqual([script["name"] for script in scripts], ["set-os-version", "label-etc-files"])
+        self.assertEqual(subprocess.run(["sh", "-n"], input=scripts[0]["content"], text=True, check=False).returncode, 0)
+        self.assertEqual(cosibuild.ic_config([], "/config/mine.yaml", ("1.0.0", "1.0.0-x.1"))["scripts"]["postCustomization"][0]["name"],
+                         "set-os-version")
+
+    def test_os_version_script(self) -> None:
+        release = ('NAME="Microsoft Azure Container Linux"\nVERSION=3.0.20261104\nVERSION_ID=3.0.20261104\n'
+                   'BUILD_ID=1244962\nPRETTY_NAME="Microsoft Azure Container Linux 3.0.20261104"\n'
+                   'CPE_NAME="cpe:2.3:o:microsoft:azure_container_linux:3.0.20261104:*:*:*:*:*:*:*"\n')
+        for layout in ("a link", "two files"):
+            with self.subTest(layout=layout), tempfile.TemporaryDirectory() as root:
+                (Path(root) / "usr/lib").mkdir(parents=True)
+                (Path(root) / "etc").mkdir()
+                usr, etc = Path(root) / "usr/lib/os-release", Path(root) / "etc/os-release"
+                usr.write_text(release)
+                if layout == "a link":
+                    etc.symlink_to("../usr/lib/os-release")
+                else:
+                    etc.write_text(release)
+                inode = usr.stat().st_ino
+                script = cosibuild.os_version_script("3.0.20261104", "3.0.20261104-hello.1")
+                script = script.replace("/etc/os-release", str(etc)).replace("/usr/lib/os-release", str(usr))
+                ran = subprocess.run(["sh", "-c", script], capture_output=True, text=True, check=False)
+                self.assertEqual(ran.returncode, 0, ran.stderr)
+                for path in (usr, etc):
+                    text = path.read_text()
+                    self.assertIn("VERSION_ID=3.0.20261104-hello.1\n", text)
+                    self.assertIn("VERSION=3.0.20261104-hello.1\n", text)
+                    self.assertIn(":azure_container_linux:3.0.20261104-hello.1:", text)
+                    self.assertNotIn("hello.1-hello.1", text)
+                    self.assertIn("BUILD_ID=1244962\n", text)
+                self.assertEqual(usr.stat().st_ino, inode, "written over, so it keeps its SELinux label")
+
+    def test_os_version_script_fails_without_the_version(self) -> None:
+        with tempfile.TemporaryDirectory() as root:
+            (Path(root) / "etc").mkdir()
+            etc = Path(root) / "etc/os-release"
+            etc.write_text("VERSION_ID=9.9.9\n")
+            script = cosibuild.os_version_script("3.0.20261104", "3.0.20261104-hello.1").replace("/etc/os-release", str(etc))
+            self.assertNotEqual(subprocess.run(["sh", "-c", script], capture_output=True, check=False).returncode, 0)
+
+    def test_os_release_value(self) -> None:
+        text = 'NAME="Microsoft Azure Container Linux"\nVERSION_ID=3.0.20261104\nID=\'azurelinux\'\n'
+        self.assertEqual(cosibuild.os_release_value(text, "VERSION_ID"), "3.0.20261104")
+        self.assertEqual(cosibuild.os_release_value(text, "NAME"), "Microsoft Azure Container Linux")
+        self.assertEqual(cosibuild.os_release_value(text, "ID"), "azurelinux")
+        self.assertEqual(cosibuild.os_release_value(text, "IMAGE_VERSION"), "")
+
     def test_base_config(self) -> None:
         config = cosibuild.ic_config([], "/config/mine.yaml")
         self.assertEqual(config["baseConfigs"], [{"path": "/config/mine.yaml"}])
@@ -255,6 +306,13 @@ class MetadataTest(unittest.TestCase):
         self.assertEqual(result["bootloader"]["systemdBoot"]["entries"][0]["cmdline"], f"ro usrhash={self.NEW} acl.slot=a")
         self.assertEqual(result["images"][0], original["images"][0])
         self.assertNotIn(self.OLD, json.dumps(result))
+
+    def test_rewrite_os_version(self) -> None:
+        metadata = copy.deepcopy(self.METADATA)
+        metadata["osRelease"] = 'VERSION=3.0.20261104\nVERSION_ID=3.0.20261104\nBUILD_ID=1244962\n'
+        result = cosibuild.rewrite_metadata(metadata, {}, self.NEW, "new-uuid", "new-id", ("3.0.20261104", "3.0.20261104-x.1"))
+        self.assertEqual(result["osRelease"], 'VERSION=3.0.20261104-x.1\nVERSION_ID=3.0.20261104-x.1\nBUILD_ID=1244962\n')
+        self.assertNotIn("osRelease", cosibuild.rewrite_metadata(self.METADATA, {}, self.NEW, "u", "i", ("a", "b")))
 
     def test_needs_usr_verity(self) -> None:
         with self.assertRaisesRegex(StepError, "no /usr filesystem with verity"):
