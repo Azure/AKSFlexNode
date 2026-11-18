@@ -347,14 +347,12 @@ _isolation_assert_clean() {
 set -euo pipefail
 case "$1" in
   none)
-    for path in /opt/unbounded/node /etc/systemd/system/unbounded-kubelet.service /etc/systemd/system/unbounded-containerd.service /etc/systemd/system/node-problem-detector.service \
-      /etc/unbounded/agent/none-upgrade-journal.json /etc/unbounded/agent/none-upgrade-config; do
+    for path in /opt/unbounded/node /etc/systemd/system/unbounded-kubelet.service /etc/systemd/system/unbounded-containerd.service /etc/systemd/system/node-problem-detector.service; do
       [[ ! -e "${path}" && ! -L "${path}" ]] || { echo "Reset left ${path}" >&2; exit 1; }
     done
     ;;
   container)
-    for path in /var/lib/unbounded/containers /opt/unbounded/runtime/runc /etc/systemd/system/unbounded-node-kube1.service /etc/systemd/system/unbounded-node-kube2.service \
-      /etc/unbounded/agent/container-upgrade-config; do
+    for path in /var/lib/unbounded/containers /opt/unbounded/runtime/runc /etc/systemd/system/unbounded-node-kube1.service /etc/systemd/system/unbounded-node-kube2.service; do
       [[ ! -e "${path}" && ! -L "${path}" ]] || { echo "Reset left ${path}" >&2; exit 1; }
     done
     ;;
