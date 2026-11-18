@@ -106,7 +106,7 @@ func (e *HostUpgrade) Acquire() (io.Closer, error) {
 
 // Validate takes an archive's HTTP or HTTPS URL, and refuses an image's, as any other URL.
 func (e *HostUpgrade) Validate(request UpgradeRequest) error {
-	_, err := secureInstallOptions(request.DownloadURL, request.SHA256, e.mode)
+	_, err := secureInstallOptions(request.DownloadURL, request.SHA256)
 	return err
 }
 
@@ -154,7 +154,7 @@ func (e *HostUpgrade) Stage(ctx context.Context, request UpgradeRequest) error {
 	if err := e.signals.recordCandidate(candidate); err != nil {
 		return err
 	}
-	if err := installAndSwitchBinary(ctx, e.log, request.DownloadURL, request.SHA256, e.paths, e.mode); err != nil {
+	if err := installAndSwitchBinary(ctx, e.log, request.DownloadURL, request.SHA256, e.paths); err != nil {
 		return err
 	}
 	if err := e.signals.recordSwitchCommitted(); err != nil {
