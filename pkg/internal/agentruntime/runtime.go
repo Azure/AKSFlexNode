@@ -54,10 +54,6 @@ type WorkerContext struct {
 // Start must succeed before persistence, and persistence must succeed before
 // Retire. Recovery guarantees are backend-specific; this interface adds no journal.
 type Runtime interface {
-	// ValidateBootstrap checks runtime ownership before bootstrap mutates the host.
-	// installed indicates that the daemon has applied state for this runtime.
-	ValidateBootstrap(context.Context, *slog.Logger, bool) error
-
 	// Worker resolves the selected worker's filesystem, executor, and service
 	// context for components without loading or updating daemon State.
 	Worker(*slog.Logger, Node) (WorkerContext, error)

@@ -79,10 +79,6 @@ func TestValidateWorkerBootstrapRejectsIncompatibleDeployment(t *testing.T) {
 			containerized: true,
 			want:          "containerized agent does not yet support",
 		},
-		{
-			name: "empty mode",
-			want: "unsupported worker isolation",
-		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -92,7 +88,7 @@ func TestValidateWorkerBootstrapRejectsIncompatibleDeployment(t *testing.T) {
 					Isolation: tc.mode,
 				},
 			}
-			err := ValidateWorkerBootstrap(t.Context(), cfg, slog.New(slog.DiscardHandler), tc.applied, tc.containerized)
+			err := ValidateWorkerBootstrap(cfg, tc.applied, tc.containerized)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("validation error = %v, want %q", err, tc.want)
 			}

@@ -33,7 +33,7 @@ func TestOCIReapplyUsesPersistedSlotAndConfig(t *testing.T) {
 				NodeConfig:               appliedConfig,
 			}
 			log := slog.New(slog.DiscardHandler)
-			if err := daemon.ValidateWorkerBootstrap(t.Context(), cfg, log, applied, false); err != nil {
+			if err := daemon.ValidateWorkerBootstrap(cfg, applied, false); err != nil {
 				t.Fatalf("validate installed worker: %v", err)
 			}
 			state, goal, reapply, err := selectBootstrap(cfg, applied)
@@ -130,7 +130,7 @@ func TestOCIReapplyRejectsInvalidSelectionBeforeWork(t *testing.T) {
 			}
 			tc.change(cfg, applied)
 
-			if err := daemon.ValidateWorkerBootstrap(t.Context(), cfg, slog.New(slog.DiscardHandler), applied, false); err != nil {
+			if err := daemon.ValidateWorkerBootstrap(cfg, applied, false); err != nil {
 				t.Fatalf("bootstrap guard: %v", err)
 			}
 			if _, _, _, err := selectBootstrap(cfg, applied); err == nil || !strings.Contains(err.Error(), tc.want) {
