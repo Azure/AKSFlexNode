@@ -8,6 +8,7 @@ import (
 	"os"
 	"syscall"
 
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -19,7 +20,11 @@ type removeRuntimeDirsTask struct {
 }
 
 func RemoveRuntimeDirs(logger *slog.Logger) phases.Task {
-	return &removeRuntimeDirsTask{logger: logger, paths: []string{ConfigDir, DefaultLogDir}}
+	return &removeRuntimeDirsTask{
+		logger: logger,
+		// Keep Flex state if the SDK directory cannot be removed.
+		paths: []string{goalstates.AgentConfigDir, ConfigDir, DefaultLogDir},
+	}
 }
 
 func (t *removeRuntimeDirsTask) Name() string { return "remove-runtime-dirs" }
