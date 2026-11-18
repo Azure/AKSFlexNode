@@ -16,6 +16,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
@@ -316,7 +317,7 @@ func (h *machineOperationHandlers) reconcileAgentReset(
 	); err != nil {
 		return ctrl.Result{}, fmt.Errorf("mark AgentReset MachineOperation in progress: %w", err)
 	}
-	if err := phases.ExecuteTask(ctx, h.log, ResetWorker(h.log, h.runtime, ResetHostHub(h.log))); err != nil {
+	if err := phases.ExecuteTask(ctx, h.log, ResetWorker(h.log, h.runtime, yurthub.ResetHostTask(h.log))); err != nil {
 		return h.finishFailedMachineOperation(
 			ctx,
 			store,

@@ -4,12 +4,34 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
+	"github.com/Azure/unbounded/pkg/agent/hostnode"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/none"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
+
+// ResetHostTask clears native-host Hub state without requiring an applied worker configuration.
+func ResetHostTask(log *slog.Logger) phases.Task {
+	return hostnode.Func("reset-host-hub", func(ctx context.Context) error {
+		backend := none.NewDefault(log)
+		worker := Worker{
+			Root: none.Root{},
+			Exec: func(ctx context.Context, args ...string) (string, error) {
+				result, err := backend.Exec(ctx, nil, isolation.ExecSpec{Args: args})
+				return result.Stdout, err
+			},
+			KubeletUnit: none.UnitKubelet,
+			Mode:        isolation.ModeNone,
+		}
+
+		return ResetHost(ctx, worker)
+	})
+}
 
 // ResetHost removes none-mode Hub state before worker identity replacement or
 // host teardown. It must not be called for a soft restart.
