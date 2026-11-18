@@ -69,15 +69,9 @@ func (h *machineOperationHandlers) reconcileHostSoftReboot(ctx context.Context, 
 	if err != nil {
 		return ctrl.Result{}, err
 	}
-	started, uncertain, err := startHostSoftReboot(ctx, h.client, h.reader, op.Name, h.machineName, h.nodeName, bootID)
-	if err != nil {
-		if uncertain {
-			return ctrl.Result{}, h.settleUncertainRebootStart(ctx, op.Name, bootID, err)
-		}
+	started, err := startHostSoftReboot(ctx, h.client, h.reader, op.Name, h.machineName, h.nodeName, bootID)
+	if err != nil || !started {
 		return ctrl.Result{}, err
-	}
-	if !started {
-		return ctrl.Result{}, nil
 	}
 
 	// The next daemon judges this from the recorded boot ID, even if shutdown
@@ -93,27 +87,14 @@ func (h *machineOperationHandlers) reconcileHostSoftReboot(ctx context.Context, 
 			Reason:  "Failed",
 			Message: err.Error(),
 		}
-		// A failed publication must not let other work pass an unresolved reboot.
-		for {
-			finishErr := finishHostSoftReboot(ctx, h.client, h.reader, op.Name, h.machineName, bootID, result)
-			if finishErr == nil {
-				h.gate.stopping.Store(false)
-				return ctrl.Result{}, nil
-			}
-			h.log.Warn("failed to report HostSoftReboot command failure; will retry", "operation", op.Name, "error", finishErr)
-
-			select {
-			case <-ctx.Done():
-				return ctrl.Result{}, errors.Join(fmt.Errorf("publish HostSoftReboot command failure: %w", finishErr), ctx.Err())
-			case <-time.After(hostSoftRebootRetry):
-			}
-		}
+		h.gate.stopping.Store(false)
+		return ctrl.Result{}, finishHostSoftReboot(ctx, h.client, h.reader, op.Name, h.machineName, bootID, result)
 	}
 	return ctrl.Result{}, nil
 }
 
-func startHostSoftReboot(ctx context.Context, c client.Client, reader client.Reader, name, machineName, nodeName, bootID string) (bool, bool, error) {
-	started, uncertain := false, false
+func startHostSoftReboot(ctx context.Context, c client.Client, reader client.Reader, name, machineName, nodeName, bootID string) (bool, error) {
+	started := false
 	err := retry.RetryOnConflict(retry.DefaultRetry, func() error {
 		var op machinav1alpha3.MachineOperation
 		if err := reader.Get(ctx, client.ObjectKey{Name: name}, &op); err != nil {
@@ -154,52 +135,17 @@ func startHostSoftReboot(ctx context.Context, c client.Client, reader client.Rea
 		target.CompletedAt = nil
 		target.BootID = bootID
 		if err := c.Status().Update(ctx, &op); err != nil {
-			uncertain = !apierrors.IsConflict(err)
 			return err
 		}
+
 		started = true
 		return nil
 	})
 	if err != nil {
-		return false, uncertain, fmt.Errorf("record HostSoftReboot boot ID: %w", err)
+		return false, fmt.Errorf("record HostSoftReboot boot ID: %w", err)
 	}
-	return started, false, nil
-}
 
-// A status write can succeed even when its response is lost. No command was
-// issued, so resolve that ambiguity before the serialized queue takes more work.
-func (h *machineOperationHandlers) settleUncertainRebootStart(ctx context.Context, name, bootID string, startErr error) error {
-	for {
-		if ctx.Err() != nil {
-			return errors.Join(startErr, ctx.Err())
-		}
-		var op machinav1alpha3.MachineOperation
-		err := h.reader.Get(ctx, client.ObjectKey{Name: name}, &op)
-		if apierrors.IsNotFound(err) {
-			return startErr
-		}
-		if err == nil {
-			target := operationTargetStatus(&op.Status, h.machineName)
-			if op.Spec.OperationKind != machinav1alpha3.OperationHostSoftReboot || op.Status.IsTerminal() || target == nil || target.Phase != machinav1alpha3.OperationPhaseInProgress || target.BootID != bootID {
-				return startErr
-			}
-			result := agentdaemon.MachineOperationResult[int64]{
-				Phase:   machinav1alpha3.OperationPhaseFailed,
-				Reason:  "ExecutionFailed",
-				Message: "HostSoftReboot was not issued because its status update failed",
-			}
-			err = finishHostSoftReboot(ctx, h.client, h.reader, name, h.machineName, bootID, result)
-			if err == nil {
-				return startErr
-			}
-		}
-		h.log.Warn("failed to resolve HostSoftReboot status update; will retry", "operation", name, "error", err)
-		select {
-		case <-ctx.Done():
-			return errors.Join(startErr, err, ctx.Err())
-		case <-time.After(hostSoftRebootRetry):
-		}
-	}
+	return started, nil
 }
 
 func finishHostSoftReboot(ctx context.Context, c client.Client, reader client.Reader, name, machineName, bootID string, result agentdaemon.MachineOperationResult[int64]) error {

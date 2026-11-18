@@ -211,13 +211,25 @@ func TestHostSoftRebootUncertainStatusWriteNeverRunsCommand(t *testing.T) {
 			if err == nil || h.calls != 0 {
 				t.Fatalf("error = %v, reboot calls = %d", err, h.calls)
 			}
-			want := machinav1alpha3.OperationPhaseFailed
-			if canceled {
-				want = machinav1alpha3.OperationPhaseInProgress
-			}
 			op := getSoftOperation(t, c, "soft")
-			if op.Status.Phase != want || op.Status.Targets[0].Phase != want {
-				t.Fatalf("status = %+v, want %s", op.Status, want)
+			if op.Status.Phase != machinav1alpha3.OperationPhaseInProgress || op.Status.Targets[0].Phase != machinav1alpha3.OperationPhaseInProgress || writes != 1 {
+				t.Fatalf("status = %+v, writes = %d", op.Status, writes)
+			}
+
+			if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
+				t.Fatal(err)
+			}
+			if h.calls != 0 || writes != 1 {
+				t.Fatalf("replayed an unacknowledged start: calls = %d, writes = %d", h.calls, writes)
+			}
+
+			if err := publishHostSoftReboots(t.Context(), discardLogger(), c, c, "machine1", func() (string, error) { return "boot1", nil }); err != nil {
+				t.Fatal(err)
+			}
+			op = getSoftOperation(t, c, "soft")
+			condition := apimeta.FindStatusCondition(op.Status.Conditions, "Completed")
+			if op.Status.Phase != machinav1alpha3.OperationPhaseFailed || condition == nil || condition.Reason != "RebootNotObserved" {
+				t.Fatalf("startup judgment = %+v", op.Status)
 			}
 		})
 	}
@@ -780,33 +792,41 @@ func TestHostSoftRebootPreflightReadErrors(t *testing.T) {
 	}
 }
 
-func TestHostSoftRebootFailurePublicationHoldsAdmission(t *testing.T) {
+func TestHostSoftRebootFailedPublicationDoesNotReplayCommand(t *testing.T) {
 	t.Parallel()
 
-	ctx, cancel := context.WithCancel(t.Context())
-	defer cancel()
 	writes := 0
+	publicationErr := errors.New("publication failed")
 	c := fake.NewClientBuilder().WithScheme(newScheme()).
 		WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
 		WithObjects(softOperation("soft")).WithInterceptorFuncs(interceptor.Funcs{
 		SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
 			writes++
 			if writes == 2 {
-				cancel()
-				return errors.New("publication failed")
+				return publicationErr
 			}
 			return c.SubResource(sub).Update(ctx, obj, opts...)
 		},
 	}).Build()
 	h := newSoftHarness(t, c, c)
-	h.handlers.rebootHost = func(context.Context, *slog.Logger) error { return errors.New("command failed") }
+	h.handlers.rebootHost = func(context.Context, *slog.Logger) error {
+		h.calls++
+		return errors.New("command failed")
+	}
 
-	_, err := h.reconciler.ReconcileMachineOperation(ctx, "soft")
-	if !errors.Is(err, context.Canceled) || !h.handlers.gate.stopping.Load() || writes != 2 {
+	_, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft")
+	if !errors.Is(err, publicationErr) || h.handlers.gate.stopping.Load() || writes != 2 {
 		t.Fatalf("error = %v, stopping = %v, writes = %d", err, h.handlers.gate.stopping.Load(), writes)
 	}
 	if got := getSoftOperation(t, c, "soft").Status.Phase; got != machinav1alpha3.OperationPhaseInProgress {
 		t.Fatalf("phase = %s", got)
+	}
+
+	if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
+		t.Fatal(err)
+	}
+	if h.calls != 1 || writes != 2 {
+		t.Fatalf("replayed the failed command: calls = %d, writes = %d", h.calls, writes)
 	}
 }
 
