@@ -15,6 +15,7 @@ func (noneRuntime) ValidateBootstrap(ctx context.Context, log *slog.Logger, inst
 	if err != nil {
 		return err
 	}
+
 	backend := none.NewDefault(log)
 	return validateNoneBootstrap(ctx, log, installed, artifacts, backend, host.EnsureNoExistingDeploymentFor)
 }
@@ -26,8 +27,10 @@ func validateNoneBootstrap(ctx context.Context, log *slog.Logger, installed bool
 	if !installed && artifacts.none {
 		return fmt.Errorf("host-native worker has no applied state; reset before bootstrap")
 	}
+
 	if err := ensureClean(ctx, log, isolation.ModeNSpawn); err != nil {
 		return err
 	}
+
 	return backend.PreflightOwnership()
 }

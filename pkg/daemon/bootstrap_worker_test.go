@@ -87,7 +87,11 @@ func TestValidateWorkerBootstrapRejectsIncompatibleDeployment(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
 
-			cfg := &config.Config{Bootstrap: config.BootstrapConfig{Isolation: tc.mode}}
+			cfg := &config.Config{
+				Bootstrap: config.BootstrapConfig{
+					Isolation: tc.mode,
+				},
+			}
 			err := ValidateWorkerBootstrap(t.Context(), cfg, slog.New(slog.DiscardHandler), tc.applied, tc.containerized)
 			if err == nil || !strings.Contains(err.Error(), tc.want) {
 				t.Fatalf("validation error = %v, want %q", err, tc.want)

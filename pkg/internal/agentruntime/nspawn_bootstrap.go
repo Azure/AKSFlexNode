@@ -11,6 +11,7 @@ func (NSpawn) ValidateBootstrap(_ context.Context, _ *slog.Logger, _ bool) error
 	if err != nil {
 		return err
 	}
+
 	return validateNSpawnBootstrap(artifacts)
 }
 
@@ -21,5 +22,6 @@ func validateNSpawnBootstrap(artifacts bootstrapArtifacts) error {
 	if artifacts.none {
 		return fmt.Errorf("host-native worker is present; reset before changing isolation")
 	}
+
 	return nil
 }

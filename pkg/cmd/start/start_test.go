@@ -173,7 +173,12 @@ func (s *bootstrapTestStore) Delete(context.Context) error {
 
 func bootstrapConfig(mode isolation.Mode) *config.Config {
 	return &config.Config{
-		Bootstrap:  config.BootstrapConfig{Isolation: mode},
+		Bootstrap: config.BootstrapConfig{
+			Isolation: mode,
+			Experimental: &config.ExperimentalConfig{
+				ContainerIsolation: mode == isolation.ModeContainer,
+			},
+		},
 		Components: config.ComponentsConfig{Kubernetes: "1.34.0"},
 		Agent:      config.AgentConfig{NodeName: "node1"},
 		Azure: config.AzureConfig{

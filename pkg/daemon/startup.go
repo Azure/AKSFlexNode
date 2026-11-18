@@ -17,9 +17,11 @@ func prepareDaemonStartup(ctx context.Context, cfg *config.Config, log *slog.Log
 	if err != nil {
 		return nil, nil, err
 	}
+
 	if err := validateStartupState(cfg.Bootstrap.Isolation, applied); err != nil {
 		return nil, nil, err
 	}
+
 	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
 	if err != nil {
 		return nil, nil, err
@@ -44,6 +46,7 @@ func prepareDaemonStartup(ctx context.Context, cfg *config.Config, log *slog.Log
 			convergeHeldAssets = convergence.WriteUnits
 		}
 	}
+
 	return worker, convergeHeldAssets, nil
 }
 
@@ -92,6 +95,7 @@ func recoverStartupWorker(ctx context.Context, cfg *config.Config, log *slog.Log
 	if cfg.Bootstrap.Isolation == isolation.ModeNSpawn {
 		return nil
 	}
+
 	input := agentruntime.Inputs{
 		Config: cfg,
 		Node: agentruntime.Node{
@@ -99,9 +103,11 @@ func recoverStartupWorker(ctx context.Context, cfg *config.Config, log *slog.Log
 			Config: applied.NodeConfig,
 		},
 	}
+
 	if err := worker.Recover(log, input).Do(ctx); err != nil {
 		return fmt.Errorf("recover worker at startup: %w", err)
 	}
+
 	return nil
 }
 

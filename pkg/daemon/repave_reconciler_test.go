@@ -110,7 +110,9 @@ func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, ku
 		Runtime:  operator,
 		State:    operator,
 		Config: &config.Config{
-			Bootstrap: config.BootstrapConfig{Isolation: config.DefaultIsolationMode},
+			Bootstrap: config.BootstrapConfig{
+				Isolation: config.DefaultIsolationMode,
+			},
 		},
 		Refresher: noopBootstrapDataRefresher{},
 		HookUnits: func(*slog.Logger) phases.Task { return testTask{name: "hooks"} },

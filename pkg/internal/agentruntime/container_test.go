@@ -249,7 +249,8 @@ func TestContainerUpgradeUnpackInstallsHelper(t *testing.T) {
 					OfflineArtifacts: config.OfflineArtifactsConfig{Source: "offline"},
 				},
 			}
-			gs, err := bindContainerArtifacts(node, slog.New(slog.DiscardHandler), cfg)
+			materialized := false
+			gs, err := bindContainerArtifacts(node, slog.New(slog.DiscardHandler), cfg, &materialized)
 			if err != nil {
 				t.Fatal(err)
 			}

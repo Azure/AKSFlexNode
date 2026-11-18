@@ -7,10 +7,12 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/containerops"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostnode/hostnodetest"
 	"github.com/Azure/unbounded/pkg/agent/isolation/container"
 )
@@ -104,6 +106,18 @@ func (f *cleanupRetryFixture) runtime() containerRuntime {
 	}
 }
 
+func (f *cleanupRetryFixture) teardown() *containerops.Teardown {
+	return &containerops.Teardown{
+		Log:         slog.New(slog.DiscardHandler),
+		Layout:      f.layout,
+		SystemdDir:  f.systemd,
+		Root:        f.root,
+		RuntimePath: filepath.Join(f.root, "runc"),
+		MountInfo:   f.mountInfo,
+		Run:         f.run,
+	}
+}
+
 func cleanupInput(target, previous string) Inputs {
 	old := Node{Slot: previous, GoalState: hostnodetest.GoalState(previous, false)}
 	return Inputs{
@@ -172,12 +186,49 @@ func TestContainerRetireAndStaleSlotCleanupRetry(t *testing.T) {
 	}
 }
 
+func TestContainerSnapshotFailureDoesNotClaimUnownedBPFFS(t *testing.T) {
+	t.Parallel()
+
+	f := newCleanupRetryFixture(t, "kube2")
+	if err := os.RemoveAll(f.layout.RootfsDir("kube2")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(f.systemd, container.UnitName("kube2"))); err != nil {
+		t.Fatal(err)
+	}
+
+	configDir := filepath.Join(f.root, goalstates.AgentConfigDir)
+	if err := os.MkdirAll(filepath.Dir(configDir), 0o750); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(configDir, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err := f.runtime().Start(slog.New(slog.DiscardHandler), cleanupInput("kube2", "kube1")).Do(t.Context())
+	if !errors.Is(err, syscall.ENOTDIR) || !strings.Contains(err.Error(), "save shared configuration") {
+		t.Fatalf("snapshot error = %v", err)
+	}
+	if f.unpacks != 0 || f.unmounts != 0 || len(f.calls) != 0 {
+		t.Fatalf("snapshot failure mutated the worker: unpacks=%d unmounts=%d calls=%v", f.unpacks, f.unmounts, f.calls)
+	}
+
+	backend := &container.Backend{Layout: f.layout, SystemdDir: f.systemd}
+	if backend.SlotExists("kube2") {
+		t.Fatal("created an ownership trace for an unowned bpffs-only target")
+	}
+	if _, err := os.Stat(filepath.Join(f.root, container.BPFFSPath("kube2"))); err != nil {
+		t.Fatalf("unowned bpffs path changed: %v", err)
+	}
+}
+
 func TestContainerStaleCleanupPreservesCancellation(t *testing.T) {
 	t.Parallel()
 
 	f := newCleanupRetryFixture(t, "kube1")
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
+
 	err := f.runtime().Start(slog.New(slog.DiscardHandler), cleanupInput("kube1", "kube2")).Do(ctx)
 	if !errors.Is(err, context.Canceled) || !errors.Is(err, f.busy) {
 		t.Fatalf("cleanup error = %v", err)
@@ -217,12 +268,15 @@ func TestContainerStaleCleanupRetainsTraceAfterUnmount(t *testing.T) {
 		}
 		assertCleanupTrace(t, f, "kube1")
 	}
+
 	if f.unmounts != 2 || f.unpacks != 0 {
 		t.Fatalf("unmounts=%d unpacks=%d", f.unmounts, f.unpacks)
 	}
+
 	if err := os.Remove(blocker); err != nil {
 		t.Fatal(err)
 	}
+
 	err := f.runtime().Start(log, cleanupInput("kube1", "kube2")).Do(t.Context())
 	if !errors.Is(err, f.unpackErr) || f.unpacks != 1 {
 		t.Fatalf("retry error=%v unpacks=%d", err, f.unpacks)
@@ -286,15 +340,7 @@ func TestContainerResetRetriesFailedBPFFSCleanup(t *testing.T) {
 
 	f := newCleanupRetryFixture(t, "kube1")
 	for attempt := 0; attempt < 3; attempt++ {
-		teardown := &containerops.Teardown{
-			Log:         slog.New(slog.DiscardHandler),
-			Layout:      f.layout,
-			SystemdDir:  f.systemd,
-			Root:        f.root,
-			RuntimePath: filepath.Join(f.root, "runc"),
-			MountInfo:   f.mountInfo,
-			Run:         f.run,
-		}
+		teardown := f.teardown()
 		if !teardown.Present() {
 			t.Fatal("fresh reset did not discover OCI")
 		}
@@ -304,19 +350,14 @@ func TestContainerResetRetriesFailedBPFFSCleanup(t *testing.T) {
 		}
 		assertCleanupTrace(t, f, "kube1")
 	}
+
 	f.busy = nil
-	teardown := &containerops.Teardown{
-		Log:         slog.New(slog.DiscardHandler),
-		Layout:      f.layout,
-		SystemdDir:  f.systemd,
-		Root:        f.root,
-		RuntimePath: filepath.Join(f.root, "runc"),
-		MountInfo:   f.mountInfo,
-		Run:         f.run,
-	}
+	teardown := f.teardown()
+
 	if err := containerTeardown(teardown).Do(t.Context()); err != nil {
 		t.Fatalf("reset retry: %v", err)
 	}
+
 	if teardown.Present() || f.unmounts != 4 {
 		t.Fatalf("reset retained ownership=%t unmounts=%d", teardown.Present(), f.unmounts)
 	}
@@ -347,15 +388,7 @@ func TestContainerCleanupReportsTraceRetentionFailure(t *testing.T) {
 			case "upgrade":
 				err = f.runtime().Start(log, cleanupInput("kube1", "kube2")).Do(t.Context())
 			case "reset":
-				teardown := &containerops.Teardown{
-					Log:         log,
-					Layout:      f.layout,
-					SystemdDir:  f.systemd,
-					Root:        f.root,
-					RuntimePath: filepath.Join(f.root, "runc"),
-					MountInfo:   f.mountInfo,
-					Run:         f.run,
-				}
+				teardown := f.teardown()
 				err = containerTeardown(teardown).Do(t.Context())
 			}
 			if !errors.Is(err, f.busy) || !strings.Contains(err.Error(), "retain OCI slot kube1 ownership") {
