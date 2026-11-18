@@ -5,8 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/go-logr/logr"
@@ -22,18 +20,15 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
-	"github.com/Azure/AKSFlexNode/pkg/kubeauth"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
-	"github.com/Azure/unbounded/pkg/agent/daemoncred"
 )
 
 const (
 	agentUpgradeStartupStability = 3 * time.Second
 	agentUpgradePublishRetry     = 10 * time.Second
-	daemonCredentialDir          = "daemon-credentials"    //nolint:gosec // Directory name, not a credential.
-	daemonCredentialGroup        = "aks-flex-node-daemons" //nolint:gosec // Kubernetes group name, not a credential.
 )
 
 // Run starts the machine-driven daemon loop.
@@ -44,21 +39,21 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 
 	// In its container the agent keeps nothing on the host to migrate, install,
 	// or remove: the image carries it.
-	containerized := Containerized()
+	containerized := agentdeployment.Containerized()
 
 	// After an AgentUpgrade from a release that predates the host root, this is
 	// the first time the new agent runs on the host.
 	if !containerized {
-		if err := MigrateHostRoot(log); err != nil {
+		if err := agentdeployment.MigrateHostRoot(log); err != nil {
 			return err
 		}
 	}
 
 	// Existing direct-file installations may predate the recovery units. Keep
 	// the binary layout and systemd rollback assets converged on every startup,
-	// except while an AgentUpgrade is pending; see ensureDaemonServiceAssets.
+	// except while an AgentUpgrade is pending; see agentdeployment.EnsureDaemonServiceAssets.
 	if !containerized {
-		if err := InstallHostBinary(ctx, log); err != nil {
+		if err := agentdeployment.InstallHostBinary(ctx, log); err != nil {
 			return err
 		}
 	}
@@ -70,7 +65,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// an AgentUpgrade is pending they are the last-good version's, which name it
 	// only on a host not yet moved off /usr/local, where nothing is removed.
 	if !containerized {
-		if err := removeDaemonLegacySeed(log); err != nil {
+		if err := agentdeployment.RemoveDaemonLegacySeed(log); err != nil {
 			log.Warn("failed to remove the agent binary left in /usr/local/bin", "error", err)
 		}
 	}
@@ -83,13 +78,13 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	// before the daemon builds its clients, as a host's install does above: a daemon whose
 	// credentials fail still leaves them as its image has them.
 	if containerized {
-		convergence := newContainerAgentConvergence(log, store)
-		held, err := convergence.converge(ctx)
+		convergence := agentdeployment.NewContainerConvergence(log)
+		held, err := convergeContainerStartup(ctx, store, convergence)
 		if err != nil {
 			return err
 		}
 		if held {
-			convergeHeldAssets = convergence.writeUnits
+			convergeHeldAssets = convergence.WriteUnits
 		}
 	}
 	if cfg.UsesKubeconfigCredentials() {
@@ -127,14 +122,25 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return fmt.Errorf("create daemon manager: %w", err)
 	}
-	var upgrades agentUpgrader
+	var (
+		deploymentUpgrade agentdeployment.UpgradeExecutor
+		hostUpgrades      *agentdeployment.HostUpgrade
+	)
 	if containerized {
-		upgrades, err = newContainerAgentUpgradeExecutor(log, store)
+		deploymentUpgrade = agentdeployment.NewContainerUpgrade(log)
 	} else {
-		upgrades, err = newHostAgentUpgradeExecutor(log, store)
+		hostUpgrades = agentdeployment.NewHostUpgrade(log)
+		deploymentUpgrade = hostUpgrades
 	}
+
+	instanceID, err := newDaemonInstanceID()
 	if err != nil {
-		return err
+		return fmt.Errorf("create daemon instance ID: %w", err)
+	}
+	upgrades := &agentUpgradeCoordinator{
+		UpgradeExecutor: deploymentUpgrade,
+		state:           store,
+		instanceID:      instanceID,
 	}
 	directClient, err := client.New(restCfg, client.Options{Scheme: newScheme()})
 	if err != nil {
@@ -156,8 +162,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		State:                    store,
 		Config:                   cfg,
 		Refresher:                bootstrapDataRefresherForConfig(cfg),
-		HookUnits:                EnsureNSpawnLifecycleUnits,
-		Uninstall:                UninstallService,
+		HookUnits:                agentdeployment.EnsureNSpawnLifecycleUnits,
+		Uninstall:                agentdeployment.UninstallService,
 		ClearConfig:              config.RemoveRuntimeDirs(log),
 		NodeName:                 nodeName,
 		MachineReconcileInterval: time.Duration(cfg.Agent.MachineReconcileInterval),
@@ -176,7 +182,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		Runtime:              runtime,
 		State:                store,
 		Config:               cfg,
-		Uninstall:            UninstallService,
+		Uninstall:            agentdeployment.UninstallService,
 		ClearConfig:          config.RemoveRuntimeDirs(log),
 		Resolve:              config.ResolveMachineGoalState,
 		AgentUpgrade:         upgrades,
@@ -215,21 +221,21 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			func(ctx context.Context) error {
 				return publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
 			},
-			upgrades.signalStore().read,
+			upgrades.SignalStore().Read,
 			convergeHeldAssets,
 			func() {
 				// After the upgrade is reported, so a move never runs
 				// before this binary has shown it can start, and so the signal
 				// it waits for is gone. In its container the agent has no
 				// install on the host to move.
-				if hostUpgrades, ok := upgrades.(*hostAgentUpgradeExecutor); ok {
+				if !containerized {
 					restarted := reconcileHostRootUnderLock(ctx, log, cfg, store, hostUpgrades)
-					unfinished, err := hostRootMoveUnfinishedHere()
+					unfinished, err := agentdeployment.HostRootMoveUnfinishedHere()
 					if err != nil {
 						log.Warn("could not tell whether the move to the host root has finished; holding as if it has not", "error", err)
 						unfinished = true
 					}
-					if reason := holdForHostRoot(restarted, unfinished, hostUpgrades.paths, defaultAgentUpgradePaths()); reason != "" {
+					if reason := holdForHostRoot(restarted, unfinished, hostUpgrades.Paths(), agentdeployment.DefaultUpgradePaths()); reason != "" {
 						// The gate stays closed; the next process opens it.
 						if err := awaitReplacement(ctx, log, reason, hostRootRestartWait); err != nil {
 							stopManager(err)
@@ -251,109 +257,4 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return cause
 	}
 	return err
-}
-
-func daemonRESTConfig(ctx context.Context, cfg *config.Config) (*rest.Config, func(), error) {
-	plugin, err := CredentialPlugin()
-	if err != nil {
-		return nil, nil, err
-	}
-	bootstrapRestCfg, err := bootstrapCredentialRESTConfig(cfg, plugin)
-	if err != nil {
-		return nil, nil, err
-	}
-	if cfg.UsesKubeconfigCredentials() || !cfg.IsBootstrapTokenConfigured() {
-		return bootstrapRestCfg, func() {}, nil
-	}
-	credentials, stop, err := daemonRESTConfigProvider(ctx, cfg, bootstrapRestCfg)
-	if err != nil {
-		return nil, nil, err
-	}
-	return credentials.RESTConfig(), stop, nil
-}
-
-func daemonRESTConfigProvider(ctx context.Context, cfg *config.Config, base *rest.Config) (*daemoncred.RESTConfigProvider, func(), error) {
-	credentialDir := filepath.Join(config.ConfigDir, daemonCredentialDir)
-	if err := os.MkdirAll(credentialDir, 0o700); err != nil {
-		return nil, nil, fmt.Errorf("create daemon credential directory: %w", err)
-	}
-	credentialCtx, stop := context.WithCancel(ctx)
-	provider, err := daemoncred.NewRESTConfigProvider(credentialCtx, base, cfg.Agent.NodeName, daemonControllerCertificateOptions(credentialDir))
-	if err != nil {
-		stop()
-		return nil, nil, fmt.Errorf("create daemon credential provider: %w", err)
-	}
-	go provider.Run(credentialCtx)
-	return provider, stop, nil
-}
-
-func daemonControllerCertificateOptions(credentialDir string) daemoncred.ControllerCertificateOptions {
-	return daemoncred.ControllerCertificateOptions{
-		Name:          "aks-flex-node-daemon",
-		DaemonGroup:   daemonCredentialGroup,
-		CredentialDir: credentialDir,
-		WaitTimeout:   2 * time.Minute,
-	}
-}
-
-func retireDaemonCredentials() error {
-	return retireDaemonCredentialsAt(filepath.Join(config.ConfigDir, daemonCredentialDir))
-}
-
-func retireDaemonCredentialsAt(credentialDir string) error {
-	if err := os.RemoveAll(credentialDir); err != nil {
-		return fmt.Errorf("remove retired daemon credential directory: %w", err)
-	}
-	return nil
-}
-
-// bootstrapCredentialRESTConfig builds the client the daemon uses until its own
-// certificate is issued. An exec credential runs plugin; see CredentialPlugin.
-func bootstrapCredentialRESTConfig(cfg *config.Config, plugin string) (*rest.Config, error) {
-	return kubeauth.BootstrapRESTConfigWithPlugin(cfg, plugin)
-}
-
-// openGateAfterAgentUpgradeJudgment publishes the result of an AgentUpgrade the daemon started
-// for, retrying, and then runs proceed, which opens the startup gate, unless the daemon has to be
-// replaced first, as after it queued its restart from the host root. It runs nothing while the
-// upgrade's signal remains, as when recovery scheduled a restart into the last-good binary,
-// which opens the gate instead. Before proceed, it converges the service assets the daemon held
-// back at startup, now that the upgrade is judged; failing that is only logged, as the
-// last-good version's assets still work, and the next start converges them again.
-func openGateAfterAgentUpgradeJudgment(
-	ctx context.Context,
-	log *slog.Logger,
-	publish func(context.Context) error,
-	readSignal func() (*agentUpgradeSignal, error),
-	convergeHeldAssets func(context.Context) error,
-	proceed func(),
-	retry time.Duration,
-) {
-	for {
-		publishErr := publish(ctx)
-		pending, readErr := readSignal()
-		switch {
-		case publishErr != nil:
-			log.Warn("failed to publish AgentUpgrade startup result; will retry", "error", publishErr)
-		case readErr != nil:
-			log.Warn("failed to confirm AgentUpgrade startup signal; will retry", "error", readErr)
-		case pending != nil:
-			// Recovery scheduled a restart. Keep reconciliation gated until the
-			// last-good process starts and consumes the retained signal.
-			return
-		default:
-			if err := convergeHeldAssets(ctx); err != nil {
-				log.Warn("failed to update the agent's service assets after its upgrade; the last-good version's remain",
-					"error", err)
-			}
-			proceed()
-			return
-		}
-
-		select {
-		case <-ctx.Done():
-			return
-		case <-time.After(retry):
-		}
-	}
 }

@@ -1,4 +1,4 @@
-package daemon
+package agentdeployment
 
 import (
 	"context"
@@ -20,15 +20,47 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/hostroot"
 )
+
+// DefaultUpgradePaths returns the host-side agent upgrade layout under the
+// resolved host root. Callers that change the host migrate it first; see
+// MigrateHostRoot.
+func DefaultUpgradePaths() UpgradePaths {
+	return UpgradePathsUnder(hostroot.Resolve())
+}
+
+// UpgradePathsUnder builds the upgrade layout under a resolved host root.
+//
+// SignalPath is under /etc rather than the root. It is state about an upgrade
+// rather than part of the installed layout, and has to survive a rollback to a
+// binary that predates the host root.
+func UpgradePathsUnder(root string) UpgradePaths {
+	binaryDir := filepath.Join(root, ManagedBinaryDir)
+
+	return UpgradePaths{
+		BinaryPath:   filepath.Join(root, "bin", binaryName),
+		BluePath:     filepath.Join(binaryDir, "aks-flex-node-blue"),
+		GreenPath:    filepath.Join(binaryDir, "aks-flex-node-green"),
+		CurrentPath:  filepath.Join(binaryDir, "aks-flex-node-current"),
+		LastGoodPath: filepath.Join(binaryDir, "aks-flex-node-last-good"),
+		SignalPath:   "/etc/aks-flex-node/agent-upgrade-signal.json",
+	}
+}
+
+// RecoveryScriptPathUnder returns where the recovery script is installed under a
+// resolved host root.
+func RecoveryScriptPathUnder(root string) string {
+	return filepath.Join(root, ManagedBinaryDir, "aks-flex-node-recovery.sh")
+}
 
 const (
-	agentUpgradeBinaryMode     = 0o755
-	agentUpgradeMaxBinaryBytes = 256 << 20
-	agentUpgradeLockPath       = "/run/aks-flex-node-agent-upgrade.lock"
+	upgradeBinaryMode     = 0o755
+	upgradeMaxBinaryBytes = 256 << 20
+	upgradeLockPath       = "/run/aks-flex-node-agent-upgrade.lock"
 )
 
-type agentUpgradePaths struct {
+type UpgradePaths struct {
 	BinaryPath   string
 	BluePath     string
 	GreenPath    string
@@ -37,7 +69,7 @@ type agentUpgradePaths struct {
 	SignalPath   string
 }
 
-func (p agentUpgradePaths) layout() agentbinary.Layout {
+func (p UpgradePaths) Layout() agentbinary.Layout {
 	return agentbinary.Layout{
 		BinaryPath:   p.BinaryPath,
 		BluePath:     p.BluePath,
@@ -47,7 +79,7 @@ func (p agentUpgradePaths) layout() agentbinary.Layout {
 	}
 }
 
-func (p agentUpgradePaths) sharedPaths() (goalstates.AgentUpgradePaths, error) {
+func (p UpgradePaths) sharedPaths() (goalstates.AgentUpgradePaths, error) {
 	paths := goalstates.AgentUpgradePaths{
 		BinaryPath:   p.BinaryPath,
 		BluePath:     p.BluePath,
@@ -68,16 +100,13 @@ func (p agentUpgradePaths) sharedPaths() (goalstates.AgentUpgradePaths, error) {
 	return goalstates.AgentUpgradePaths{}, fmt.Errorf("resolve current agent binary: %w", err)
 }
 
-// ensureAgentUpgradeLayout adds Flex-specific ownership validation around the
+// ensureUpgradeLayout adds Flex-specific ownership validation around the
 // shared idempotent migration and link initialization implementation.
-func ensureAgentUpgradeLayout(ctx context.Context, log *slog.Logger, paths agentUpgradePaths) error {
-	if log == nil {
-		return fmt.Errorf("logger is nil")
-	}
+func ensureUpgradeLayout(ctx context.Context, log *slog.Logger, paths UpgradePaths) error {
 	if err := validateAgentUpgradePaths(paths); err != nil {
 		return err
 	}
-	productionPaths := paths == defaultAgentUpgradePaths()
+	productionPaths := paths == DefaultUpgradePaths()
 	if productionPaths && os.Geteuid() != 0 {
 		return fmt.Errorf("agent binary layout must be initialized as root")
 	}
@@ -94,7 +123,7 @@ func ensureAgentUpgradeLayout(ctx context.Context, log *slog.Logger, paths agent
 	return nil
 }
 
-func validateRootOwnedAgentUpgradePaths(paths agentUpgradePaths) error {
+func validateRootOwnedAgentUpgradePaths(paths UpgradePaths) error {
 	for _, path := range []string{
 		filepath.Dir(paths.BluePath),
 		paths.BinaryPath,
@@ -119,7 +148,7 @@ func validateRootOwnedAgentUpgradePaths(paths agentUpgradePaths) error {
 	return nil
 }
 
-func validateAgentUpgradePaths(paths agentUpgradePaths) error {
+func validateAgentUpgradePaths(paths UpgradePaths) error {
 	values := []string{paths.BinaryPath, paths.BluePath, paths.GreenPath, paths.CurrentPath, paths.LastGoodPath, paths.SignalPath}
 	seen := make(map[string]struct{}, len(values))
 	for _, value := range values {
@@ -134,12 +163,12 @@ func validateAgentUpgradePaths(paths agentUpgradePaths) error {
 	return nil
 }
 
-// flattenAgentLayout leaves the agent's binary under the host root as a regular file, a copy of
+// flattenLayout leaves the agent's binary under the host root as a regular file, a copy of
 // the binary the layout runs, and removes the blue/green layout, as reset does once the agent's
 // unit is gone: the aks-flex-node command still works, and the next start seeds a new layout from
 // the binary that runs it. It holds the activation lock, so it never runs beside an activation's
 // switch. Without a layout, it does nothing.
-func flattenAgentLayout(log *slog.Logger, paths agentUpgradePaths, lockPath string) error {
+func flattenLayout(log *slog.Logger, paths UpgradePaths, lockPath string) error {
 	layoutDir := filepath.Dir(paths.CurrentPath)
 	if _, err := os.Lstat(layoutDir); errors.Is(err, os.ErrNotExist) {
 		return nil
@@ -152,9 +181,9 @@ func flattenAgentLayout(log *slog.Logger, paths agentUpgradePaths, lockPath stri
 	}
 	defer lock.Close() //nolint:errcheck // releasing the lock
 
-	active, err := resolvedExecutable(paths.CurrentPath)
+	active, err := resolveExecutable(paths.CurrentPath)
 	if err != nil {
-		active, err = resolvedExecutable(paths.LastGoodPath)
+		active, err = resolveExecutable(paths.LastGoodPath)
 	}
 	if err != nil {
 		return fmt.Errorf("find the binary the layout runs: %w", err)
@@ -171,7 +200,7 @@ func flattenAgentLayout(log *slog.Logger, paths agentUpgradePaths, lockPath stri
 	return nil
 }
 
-func resolvedExecutable(path string) (string, error) {
+func resolveExecutable(path string) (string, error) {
 	resolved, err := filepath.EvalSymlinks(path)
 	if err != nil {
 		return "", err
@@ -196,7 +225,7 @@ func copyExecutable(sourcePath, targetPath string) (err error) {
 			err = closeErr
 		}
 	}()
-	return utilio.InstallFileWithLimitedSize(targetPath, source, agentUpgradeBinaryMode, agentUpgradeMaxBinaryBytes)
+	return utilio.InstallFileWithLimitedSize(targetPath, source, upgradeBinaryMode, upgradeMaxBinaryBytes)
 }
 
 func replaceSymlink(linkPath, targetPath string) error {
@@ -224,14 +253,14 @@ func replaceSymlink(linkPath, targetPath string) error {
 
 // The shared installer permits omitted digests; require one here so its version
 // probe cannot execute an unverified candidate.
-func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
+func secureInstallOptions(rawURL, expectedDigest string) (agentbinary.InstallOptions, error) {
 	parsedURL, err := url.ParseRequestURI(strings.TrimSpace(rawURL))
 	if err != nil || parsedURL.Scheme != "http" && parsedURL.Scheme != "https" || parsedURL.Host == "" || parsedURL.User != nil || parsedURL.Fragment != "" {
 		return agentbinary.InstallOptions{}, fmt.Errorf("download URL must use HTTP or HTTPS, include a host, omit user information, and omit fragments")
 	}
 	digest := strings.TrimSpace(expectedDigest)
 	if digest == "" {
-		return agentbinary.InstallOptions{}, fmt.Errorf("missing required parameter %q", agentUpgradeSHA256Parameter)
+		return agentbinary.InstallOptions{}, fmt.Errorf("missing required parameter %q", "sha256")
 	}
 	decodedDigest, decodeErr := hex.DecodeString(strings.TrimPrefix(digest, "sha256:"))
 	if decodeErr != nil || len(decodedDigest) != sha256.Size {
@@ -245,16 +274,16 @@ func secureAgentInstallOptions(rawURL, expectedDigest string) (agentbinary.Insta
 		DownloadURL:    rawURL,
 		ExpectedSHA256: expectedDigest,
 		ExpectedMember: member,
-		Mode:           agentUpgradeBinaryMode,
+		Mode:           upgradeBinaryMode,
 		HTTPClient:     &http.Client{Timeout: 10 * time.Minute},
 	}, nil
 }
 
-func installAndSwitchAgentBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths agentUpgradePaths) error {
-	opts, err := secureAgentInstallOptions(rawURL, expectedDigest)
+func installAndSwitchBinary(ctx context.Context, log *slog.Logger, rawURL, expectedDigest string, paths UpgradePaths) error {
+	opts, err := secureInstallOptions(rawURL, expectedDigest)
 	if err != nil {
 		return err
 	}
-	_, err = agentbinary.InstallAndSwitchFromTarGz(ctx, log, paths.layout(), opts)
+	_, err = agentbinary.InstallAndSwitchFromTarGz(ctx, log, paths.Layout(), opts)
 	return err
 }

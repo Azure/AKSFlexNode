@@ -1,4 +1,4 @@
-package daemon
+package agentdeployment
 
 import (
 	"bytes"
@@ -312,8 +312,7 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 	}
 }
 
-// TestEnsureNSpawnLifecycleHelperLink: the helper beside the agent's binary ends up a link to it,
-// whatever was there.
+// The lifecycle helper must point to the current agent, including after a downgrade.
 func TestEnsureNSpawnLifecycleHelperLink(t *testing.T) {
 	t.Parallel()
 
@@ -376,7 +375,7 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
+			got, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
 			if err != nil {
 				t.Fatalf("renderAgentServiceUnit() error = %v", err)
 			}
@@ -418,7 +417,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 			t.Parallel()
 			systemdDir := t.TempDir()
 			if tt.writeUnit {
-				unit, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
+				unit, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
 				if err != nil {
 					t.Fatalf("renderAgentServiceUnit() error = %v", err)
 				}
@@ -440,7 +439,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	t.Parallel()
 
-	serviceContent, err := renderAgentServiceUnit(agentUpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
+	serviceContent, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
 	if err != nil {
 		t.Fatalf("renderAgentServiceUnit() error = %v", err)
 	}
@@ -500,8 +499,8 @@ func TestRecoveryScriptPathUnder(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			if got := recoveryScriptPathUnder(tt.root); got != tt.want {
-				t.Errorf("recoveryScriptPathUnder(%q) = %q, want %q", tt.root, got, tt.want)
+			if got := RecoveryScriptPathUnder(tt.root); got != tt.want {
+				t.Errorf("RecoveryScriptPathUnder(%q) = %q, want %q", tt.root, got, tt.want)
 			}
 		})
 	}
@@ -535,7 +534,7 @@ func TestRenderRecoveryScriptFollowsTheHostRoot(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			script := string(renderRecoveryScript(agentUpgradePathsUnder(tt.root)))
+			script := string(renderRecoveryScript(UpgradePathsUnder(tt.root)))
 
 			if !strings.Contains(script, "readlink -f "+tt.lastGood) {
 				t.Fatalf("recovery script does not read %s:\n%s", tt.lastGood, script)
@@ -553,7 +552,7 @@ func TestRenderRecoveryScriptFollowsTheHostRoot(t *testing.T) {
 func TestEmbeddedRecoveryScriptNamesTheLegacyPaths(t *testing.T) {
 	t.Parallel()
 
-	legacy := agentUpgradePathsUnder(hostroot.LegacyPath)
+	legacy := UpgradePathsUnder(hostroot.LegacyPath)
 	script := string(recoveryScriptContent)
 
 	for _, path := range []string{legacy.LastGoodPath, legacy.SignalPath} {
@@ -595,10 +594,10 @@ func TestUninstallPathsSweepBothRoots(t *testing.T) {
 
 			got := uninstallPathsUnder(tt.root, hostroot.LegacyPath)
 			want := append(tt.want,
-				filepath.Join(systemdSystemDir, ServiceUnitName),
-				filepath.Join(systemdSystemDir, recoveryServiceUnitName),
-				filepath.Join(systemdSystemDir, config.NSpawnPreStartUnit),
-				filepath.Join(systemdSystemDir, config.NSpawnPostStartUnit),
+				filepath.Join(SystemdSystemDir, ServiceUnitName),
+				filepath.Join(SystemdSystemDir, recoveryServiceUnitName),
+				filepath.Join(SystemdSystemDir, config.NSpawnPreStartUnit),
+				filepath.Join(SystemdSystemDir, config.NSpawnPostStartUnit),
 				"/etc/aks-flex-node/agent-upgrade-signal.json",
 			)
 			slices.Sort(got)
@@ -666,8 +665,8 @@ func TestRemoveIfPresentRemovesDanglingSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := removeIfPresent(link); err != nil {
-		t.Fatalf("removeIfPresent() error = %v", err)
+	if err := RemoveIfPresent(link); err != nil {
+		t.Fatalf("RemoveIfPresent() error = %v", err)
 	}
 	if _, err := os.Lstat(link); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("dangling symlink was not removed: %v", err)
@@ -892,7 +891,7 @@ func TestUninstallServiceStopsTheUnitLast(t *testing.T) {
 func TestFirstBootUnitIsConditionedOnTheAgentUnit(t *testing.T) {
 	t.Parallel()
 
-	if want := filepath.Join(systemdSystemDir, ServiceUnitName); ServiceUnitPath != want {
+	if want := filepath.Join(SystemdSystemDir, ServiceUnitName); ServiceUnitPath != want {
 		t.Fatalf("ServiceUnitPath = %q, want %q", ServiceUnitPath, want)
 	}
 }

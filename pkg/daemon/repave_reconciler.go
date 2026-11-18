@@ -115,9 +115,6 @@ type repaveReconcilerOptions struct {
 }
 
 func newRepaveReconciler(opts repaveReconcilerOptions) (*repaveReconciler, error) {
-	if opts.Log == nil {
-		opts.Log = slog.Default()
-	}
 	if opts.Machines == nil {
 		return nil, fmt.Errorf("machine client is nil")
 	}

@@ -7,7 +7,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/unbounded/pkg/agent/phases"
@@ -28,7 +28,7 @@ func NewCommand() *cobra.Command {
 
 func runReset(ctx context.Context, logger *slog.Logger) error {
 	tasks := phases.Serial(logger,
-		daemon.UninstallService(logger),
+		agentdeployment.UninstallService(logger),
 		(agentruntime.NSpawn{}).Reset(logger),
 		config.RemoveRuntimeDirs(logger),
 	)
