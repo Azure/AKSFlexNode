@@ -139,7 +139,8 @@ _isolation_wait_runtime() {
       else
         outcome=mismatch
         IFS='|' read -r mode slot version settings location <<<"${snapshot}"
-        if [[ "${mode}" == "${expected}" && "${version}" == "${desired_version}" ]]; then
+        # read only consumes the first line, so reject snapshots with additional lines.
+        if [[ "${snapshot}" != *$'\n'* && "${mode}" == "${expected}" && "${version}" == "${desired_version}" ]]; then
           rm -f "${stderr_file}"
           log_info "Worker ${mode}/${slot} runs Kubernetes ${version} at ${location}, settings ${settings}"
           return 0
