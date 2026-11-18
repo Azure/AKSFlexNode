@@ -139,6 +139,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err != nil {
 		return err
 	}
+	gate := newStartupGate()
 	machineOperations, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client:               mgr.GetClient(),
 		Reader:               mgr.GetAPIReader(),
@@ -153,11 +154,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		ClearConfig:          config.RemoveRuntimeDirs(log),
 		Resolve:              config.ResolveMachineGoalState,
 		AgentUpgrade:         upgrades,
+		Gate:                 gate,
 	})
 	if err != nil {
 		return err
 	}
-	gate := newStartupGate()
 	// The manager stops early, with a cause, when the daemon may not take work
 	// and is not replaced in time; see holdForHostRoot.
 	mgrCtx, stopManager := context.WithCancelCause(ctx)
@@ -172,6 +173,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	}
 
 	go func() {
+		ctx := mgrCtx
+
 		// Keep host-mutating reconciliation gated until the candidate has reached
 		// cache readiness and remained alive for a bounded stability interval.
 		if !mgr.GetCache().WaitForCacheSync(ctx) {
@@ -186,6 +189,11 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			ctx,
 			log,
 			func(ctx context.Context) error {
+				if _, enabled := machineOperations.(*flexMachineOperationReconciler); enabled {
+					if err := publishHostSoftReboots(ctx, log, directClient, directClient, aksMachineName, readBootID); err != nil {
+						return fmt.Errorf("publish HostSoftReboot startup results: %w", err)
+					}
+				}
 				return publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
 			},
 			upgrades.SignalStore().Read,
