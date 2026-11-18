@@ -59,11 +59,17 @@ jobs:
             exit 1
           fi
 
+          # The validated version makes this suffix an alpha.N prerelease.
+          is_alpha=false
+          if [[ "${version}" == *-alpha.* ]]; then
+            is_alpha=true
+          fi
+
           publish=true
           if [[ "${DRY_RUN}" == "true" ]]; then
             publish=false
           fi
-          if [[ "${publish}" == "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+          if [[ "${publish}" == "true" && "${is_alpha}" != "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
             echo "Publishing runs must be dispatched from main, not ${GITHUB_REF}" >&2
             exit 1
           fi
@@ -87,11 +93,15 @@ jobs:
 
           git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
           if ! git merge-base --is-ancestor "${target_sha}" refs/remotes/origin/main; then
-            if [[ "${publish}" == "true" ]]; then
+            if [[ "${publish}" == "true" && "${is_alpha}" != "true" ]]; then
               echo "Release commit ${target_sha} is not reachable from main" >&2
               exit 1
             fi
-            echo "::warning::Dry-run commit ${target_sha} is not reachable from main"
+            if [[ "${publish}" == "true" ]]; then
+              echo "::warning::Alpha release commit ${target_sha} is not reachable from main"
+            else
+              echo "::warning::Dry-run commit ${target_sha} is not reachable from main"
+            fi
           fi
 
           git show "${target_sha}:CHANGELOG.md" > changelog.md
