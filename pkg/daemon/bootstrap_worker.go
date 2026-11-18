@@ -2,20 +2,14 @@ package daemon
 
 import (
 	"bytes"
-	"context"
 	"fmt"
-	"log/slog"
 	"maps"
 	"slices"
 	"strings"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
-	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
-	"github.com/Azure/unbounded/pkg/agent/isolation/none"
-	"github.com/Azure/unbounded/pkg/agent/noneops"
-	"github.com/Azure/unbounded/pkg/agent/phases/host"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -27,31 +21,15 @@ func ValidateAgentDeployment(mode isolation.Mode, containerized bool) error {
 	return nil
 }
 
-// ValidateWorkerBootstrap refuses an isolation switch or incompatible host before mutation.
-func ValidateWorkerBootstrap(ctx context.Context, cfg *config.Config, log *slog.Logger, applied *State, containerized bool) error {
+// ValidateWorkerBootstrap checks deployment compatibility and applied isolation.
+func ValidateWorkerBootstrap(cfg *config.Config, applied *State, containerized bool) error {
 	if err := ValidateAgentDeployment(cfg.Bootstrap.Isolation, containerized); err != nil {
 		return err
 	}
 	if applied != nil && applied.Isolation != cfg.Bootstrap.Isolation {
 		return fmt.Errorf("worker isolation change requires reset")
 	}
-	artifacts, err := agentruntime.NoneUpgradeArtifactsPresent()
-	if err != nil {
-		return err
-	}
-	present := artifacts || noneops.Present()
-	if cfg.Bootstrap.Isolation == isolation.ModeNone {
-		if applied == nil && present {
-			return fmt.Errorf("host-native worker has no applied state; reset before bootstrap")
-		}
-		if err := host.EnsureNoExistingDeploymentFor(ctx, log, isolation.ModeNSpawn); err != nil {
-			return err
-		}
-		return none.NewDefault(log).PreflightOwnership()
-	}
-	if present {
-		return fmt.Errorf("host-native worker is present; reset before changing isolation")
-	}
+
 	return nil
 }
 

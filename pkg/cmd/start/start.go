@@ -66,7 +66,7 @@ func runStart(ctx context.Context, cfg *config.Config) error {
 	if err != nil {
 		return err
 	}
-	if err := daemon.ValidateWorkerBootstrap(ctx, cfg, slog.Default(), applied, containerized); err != nil {
+	if err := daemon.ValidateWorkerBootstrap(cfg, applied, containerized); err != nil {
 		return err
 	}
 	worker, err := agentruntime.New(cfg.Bootstrap.Isolation)
