@@ -147,11 +147,6 @@ func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service st
 	}
 }
 
-// WasActive reports the service state captured by Preflight under the activation lock.
-func (s *HostActivationService) WasActive() bool {
-	return s.serviceWasActive
-}
-
 func (s *HostActivationService) Prepare(_ context.Context, currentBinaryPath string) error {
 	return writeAgentServiceAssets(s.paths, s.targets, s.systemdDir, s.recoveryScript, currentBinaryPath, false)
 }

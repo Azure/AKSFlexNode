@@ -12,7 +12,6 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 	"github.com/Azure/unbounded/pkg/agent/agentbinary"
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
@@ -32,8 +31,6 @@ func (s *activationTargetService) Preflight(_ context.Context, _ string, targets
 
 	return agentbinary.ServicePlan{UpdateRequired: true}, s.preflightErr
 }
-
-func (s *activationTargetService) WasActive() bool { return s.active }
 
 func (s *activationTargetService) Prepare(context.Context, string) error {
 	s.prepares++
@@ -150,8 +147,6 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			candidate := filepath.Join(dir, "candidate")
-			linkActivationCandidate(t, candidate)
 			var state *State
 			if tc.applied != "" {
 				state = &State{Isolation: tc.applied}
@@ -160,9 +155,7 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 			service := &flexDaemonActivationService{
 				hostActivationService: leaf,
 				state:                 &testStateStore{state: state},
-				candidatePath:         candidate,
 				configPath:            configPath,
-				unitPath:              unitPath,
 			}
 
 			for range 2 {
@@ -191,15 +184,12 @@ func TestActivationTargetsUseCanonicalConfigAndAppliedMode(t *testing.T) {
 	}
 }
 
-func TestActivationConfigAbsenceRequiresInactiveResetHost(t *testing.T) {
+func TestActivationRequiresValidConfig(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
 		name         string
 		state        *State
-		unit         bool
-		danglingUnit bool
-		active       bool
 		data         string
 		overrides    bool
 		preflightErr error
@@ -207,18 +197,8 @@ func TestActivationConfigAbsenceRequiresInactiveResetHost(t *testing.T) {
 		wantPlans    int
 	}{
 		{
-			name:      "fully reset host",
-			wantPlans: 1,
-		},
-		{
-			name:    "stopped installed unit still requires config",
-			unit:    true,
-			wantErr: "installed host agent requires configuration",
-		},
-		{
-			name:         "dangling installed unit still requires config",
-			danglingUnit: true,
-			wantErr:      "installed host agent requires configuration",
+			name:    "fully reset host requires config",
+			wantErr: "load host agent configuration",
 		},
 		{
 			name:    "applied state still requires config",
@@ -226,13 +206,9 @@ func TestActivationConfigAbsenceRequiresInactiveResetHost(t *testing.T) {
 			wantErr: "load host agent configuration",
 		},
 		{
-			name:      "active service without unit still requires config",
-			active:    true,
-			wantErr:   "active host agent requires configuration",
-			wantPlans: 1,
-		},
-		{
-			name:         "unknown systemd state is not reset",
+			name:         "unknown systemd state",
+			data:         `{}`,
+			overrides:    true,
 			preflightErr: errors.New("systemd unavailable"),
 			wantErr:      "systemd unavailable",
 			wantPlans:    1,
@@ -261,62 +237,65 @@ func TestActivationConfigAbsenceRequiresInactiveResetHost(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			unitPath := filepath.Join(dir, agentdeployment.ServiceUnitName)
-			const unit = "After=himdsd.service\n"
-			if tc.unit {
-				if err := os.WriteFile(unitPath, []byte(unit), 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			if tc.danglingUnit {
-				if err := os.Symlink(filepath.Join(dir, "missing-unit"), unitPath); err != nil {
-					t.Fatal(err)
-				}
-			}
-			leaf := &activationTargetService{active: tc.active, preflightErr: tc.preflightErr}
+			leaf := &activationTargetService{preflightErr: tc.preflightErr}
 			service := &flexDaemonActivationService{
 				hostActivationService: leaf,
 				state:                 &testStateStore{state: tc.state},
 				configPath:            configPath,
-				unitPath:              unitPath,
 			}
 
 			_, err := service.Preflight(t.Context(), "/unused/current")
-			if tc.wantErr == "" {
-				if err != nil {
-					t.Fatal(err)
-				}
-				wantAfter := []string{"network-online.target", "systemd-udev-settle.service"}
-				wantWants := []string{"network-online.target", "systemd-udev-settle.service", "machines.target"}
-				if !slices.Equal(leaf.targets.AfterTargets, wantAfter) || !slices.Equal(leaf.targets.WantsTargets, wantWants) {
-					t.Fatalf("reset targets = %+v", leaf.targets)
-				}
-			} else if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+			if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
 				t.Fatalf("Preflight error = %v, want %q", err, tc.wantErr)
 			}
 			if leaf.preflights != tc.wantPlans || leaf.prepares != 0 || leaf.restarts != 0 {
 				t.Fatalf("service calls: preflight=%d prepare=%d restart=%d", leaf.preflights, leaf.prepares, leaf.restarts)
 			}
-			if tc.unit {
-				if got, err := os.ReadFile(unitPath); err != nil || string(got) != unit {
-					t.Fatalf("installed unit changed: %v", err)
-				}
-			}
 		})
 	}
 }
 
-func TestConfiglessBinaryActivation(t *testing.T) {
+func TestBinaryActivation(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name   string
-		active bool
-		unit   bool
+		name       string
+		active     bool
+		configured bool
+		candidate  string
+		wantErr    string
 	}{
-		{name: "reset host stays inactive"},
-		{name: "active host is refused", active: true},
-		{name: "installed host is refused", unit: true},
+		{
+			name:    "missing config is refused",
+			wantErr: "load host agent configuration",
+		},
+		{
+			name:       "configured inactive host stays inactive",
+			configured: true,
+		},
+		{
+			name:       "configured active host restarts",
+			configured: true,
+			active:     true,
+		},
+		{
+			name:       "dangling candidate",
+			configured: true,
+			candidate:  "dangling",
+			wantErr:    "open host agent activation candidate",
+		},
+		{
+			name:       "candidate is a directory",
+			configured: true,
+			candidate:  "directory",
+			wantErr:    "not a regular executable",
+		},
+		{
+			name:       "candidate is not executable",
+			configured: true,
+			candidate:  "nonexecutable",
+			wantErr:    "not a regular executable",
+		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Parallel()
@@ -340,26 +319,36 @@ func TestConfiglessBinaryActivation(t *testing.T) {
 				}
 			}
 			candidate := filepath.Join(dir, "candidate")
-			if err := utilio.InstallFile(candidate, strings.NewReader("#!/bin/sh\n[ \"$1\" = version ]\n"), 0o755); err != nil {
-				t.Fatal(err)
-			}
-			unitPath := filepath.Join(dir, agentdeployment.ServiceUnitName)
-			const unit = "After=himdsd.service\n"
-			if tc.unit {
-				if err := os.WriteFile(unitPath, []byte(unit), 0o644); err != nil {
+			switch tc.candidate {
+			case "dangling":
+				if err := os.Symlink(filepath.Join(dir, "missing"), candidate); err != nil {
 					t.Fatal(err)
 				}
+			case "directory":
+				if err := os.Mkdir(candidate, 0o750); err != nil {
+					t.Fatal(err)
+				}
+			case "nonexecutable":
+				if err := os.WriteFile(candidate, []byte("candidate"), 0o644); err != nil {
+					t.Fatal(err)
+				}
+			default:
+				writeExecutable(t, candidate, "#!/bin/sh\n[ \"$1\" = version ]\n")
 			}
+
+			configPath := filepath.Join(dir, "config.json")
+			if tc.configured {
+				writeActivationConfig(t, configPath, `{}`)
+			}
+
 			leaf := &activationTargetService{active: tc.active}
 			service := &flexDaemonActivationService{
 				hostActivationService: leaf,
 				state:                 &testStateStore{},
 				log:                   discardLogger(),
-				candidatePath:         candidate,
-				configPath:            filepath.Join(dir, "config.json"),
-				unitPath:              unitPath,
+				configPath:            configPath,
 				synchronize: func(string, string) error {
-					t.Error("configless host synchronized a missing worker")
+					t.Error("activation synchronized a missing worker")
 					return nil
 				},
 			}
@@ -369,9 +358,9 @@ func TestConfiglessBinaryActivation(t *testing.T) {
 				CandidatePath: candidate,
 				LockPath:      filepath.Join(dir, "activation.lock"),
 			}, service)
-			if tc.active || tc.unit {
-				if err == nil || !strings.Contains(err.Error(), "requires configuration") {
-					t.Fatalf("activation error = %v, want missing configuration", err)
+			if tc.wantErr != "" {
+				if err == nil || !strings.Contains(err.Error(), tc.wantErr) {
+					t.Fatalf("activation error = %v, want %q", err, tc.wantErr)
 				}
 				if leaf.prepares != 0 || leaf.restarts != 0 {
 					t.Fatal("refused activation prepared or restarted the service")
@@ -380,18 +369,18 @@ func TestConfiglessBinaryActivation(t *testing.T) {
 				if _, err := os.Stat(paths.GreenPath); !errors.Is(err, os.ErrNotExist) {
 					t.Fatalf("refused activation staged the candidate: %v", err)
 				}
-				if tc.unit {
-					if got, err := os.ReadFile(unitPath); err != nil || string(got) != unit {
-						t.Fatalf("refused activation changed unit: %v", err)
-					}
-				}
 				return
 			}
 			if err != nil || result.RolledBack {
 				t.Fatalf("activation result = %+v, error = %v", result, err)
 			}
-			if leaf.prepares != 1 || leaf.restarts != 0 {
-				t.Fatalf("prepare calls = %d, restarts = %d; want 1 and 0", leaf.prepares, leaf.restarts)
+
+			wantRestarts := 0
+			if tc.active {
+				wantRestarts = 1
+			}
+			if leaf.prepares != 1 || leaf.restarts != wantRestarts {
+				t.Fatalf("prepare calls = %d, restarts = %d; want 1 and %d", leaf.prepares, leaf.restarts, wantRestarts)
 			}
 			assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
 		})
@@ -402,11 +391,11 @@ func TestActivationConstructorUsesCanonicalPaths(t *testing.T) {
 	t.Parallel()
 
 	root := t.TempDir()
-	service, _, err := newFlexDaemonActivationService(discardLogger(), root, func() string { return root }, "/unused/candidate")
+	service, _, err := newFlexDaemonActivationService(discardLogger(), root, func() string { return root })
 	if err != nil {
 		t.Fatal(err)
 	}
-	if service.configPath != filepath.Join(config.ConfigDir, "config.json") || service.unitPath != agentdeployment.ServiceUnitPath {
-		t.Fatalf("activation paths = %q, %q", service.configPath, service.unitPath)
+	if service.configPath != filepath.Join(config.ConfigDir, "config.json") {
+		t.Fatalf("activation config path = %q", service.configPath)
 	}
 }

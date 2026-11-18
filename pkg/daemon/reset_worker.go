@@ -30,17 +30,14 @@ func ResetHostHub(log *slog.Logger) phases.Task {
 // ResetWorker discovers ownership at execution time, after CLI daemon shutdown.
 func ResetWorker(log *slog.Logger, worker agentruntime.Runtime, hostHub phases.Task) phases.Task {
 	return hostnode.Func("reset-worker", func(ctx context.Context) error {
-		plan, err := worker.PlanReset(log)
-		if err != nil {
-			return err
-		}
+		plan := worker.PlanReset(log)
+
 		tasks := []phases.Task{plan.Stop()}
-		// Recovery artifacts can outlive SDK runtime traces. Hub independently
-		// checks its own ownership rather than treating those artifacts as proof.
 		if plan.HasHostNativeState() {
 			tasks = append(tasks, hostHub)
 		}
 		tasks = append(tasks, plan.Finish())
+
 		return phases.Serial(log, tasks...).Do(ctx)
 	})
 }
