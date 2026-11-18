@@ -23,6 +23,7 @@ func TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst(t *testing.T) {
 	executor := &HostUpgrade{
 		log:             slog.New(slog.DiscardHandler),
 		paths:           paths,
+		mode:            isolation.ModeNSpawn,
 		signals:         NewUpgradeSignalStore(paths.SignalPath),
 		guardLegacySeed: func() error { return guardErr },
 	}
@@ -158,7 +159,7 @@ func TestHostAgentUpgradeExecutorAbortUsesCleanupContext(t *testing.T) {
 	if err := signals.recordCandidate(paths.GreenPath); err != nil {
 		t.Fatalf("recordCandidate: %v", err)
 	}
-	executor := &HostUpgrade{paths: paths, signals: signals}
+	executor := &HostUpgrade{paths: paths, signals: signals, mode: isolation.ModeNSpawn}
 	ctx, cancel := context.WithCancel(t.Context())
 	cancel()
 	if err := executor.Abort(ctx); err != nil {
@@ -181,7 +182,7 @@ func TestHostAgentUpgradeExecutorAbortPreservesSignalOnRollbackFailure(t *testin
 	if err := signals.recordCandidate(paths.BluePath); err != nil {
 		t.Fatalf("recordCandidate: %v", err)
 	}
-	executor := &HostUpgrade{paths: paths, signals: signals}
+	executor := &HostUpgrade{paths: paths, signals: signals, mode: isolation.ModeNSpawn}
 	if err := executor.Abort(t.Context()); err == nil {
 		t.Fatal("Abort error = nil")
 	}

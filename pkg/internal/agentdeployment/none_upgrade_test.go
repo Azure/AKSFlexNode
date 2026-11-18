@@ -1,14 +1,19 @@
 package agentdeployment
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/Azure/unbounded/pkg/agent/isolation"
@@ -24,7 +29,14 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			paths := testAgentUpgradePaths(t)
 			const previous = "#!/bin/sh\necho previous\n"
 			writeTestFile(t, paths.BinaryPath, previous)
-			candidate := "#!/bin/sh\ntest \"$1\" = version\n"
+			marker := filepath.Join(t.TempDir(), "executed")
+			candidate := agentUpgradeProbeScript(paths, marker)
+			candidate += "if [ \"$1\" = version ]; then exit 0; fi\n"
+			if mode != isolation.ModeNSpawn {
+				candidate += fmt.Sprintf("test \"$1\" = supports-isolation && test \"$2\" = %s\n", mode)
+			} else {
+				candidate += "exit 1\n"
+			}
 			archive := agentUpgradeTestArchive(t, candidate)
 			digest := sha256.Sum256(archive)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -70,6 +82,11 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 			}
 			assertResolvedPath(t, paths.CurrentPath, paths.GreenPath)
 			assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)
+			wantExecutions := fmt.Sprintf("%s|version||%s\n", paths.GreenPath, paths.BluePath)
+			if mode != isolation.ModeNSpawn {
+				wantExecutions += fmt.Sprintf("%s|supports-isolation|%s|%s\n", paths.GreenPath, mode, paths.BluePath)
+			}
+			assertAgentUpgradeFileContent(t, marker, wantExecutions)
 			if mode != isolation.ModeNone {
 				assertAgentUpgradeFileContent(t, helper, candidate)
 				writeTestFile(t, helper, "stale helper")
@@ -99,29 +116,164 @@ func TestHostUpgradeWorkerSynchronization(t *testing.T) {
 	}
 }
 
-func TestInstallerVerifiesChecksumBeforeExecutingCandidate(t *testing.T) {
+func TestHostUpgradeRefusesCandidateBeforeSwitch(t *testing.T) {
 	t.Parallel()
 
-	marker := filepath.Join(t.TempDir(), "executed")
-	archive := agentUpgradeTestArchive(t, fmt.Sprintf("#!/bin/sh\necho executed > %q\nexit 0\n", marker))
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		if _, err := w.Write(archive); err != nil {
-			t.Error(err)
-		}
-	}))
-	defer server.Close()
+	for name, tc := range map[string]struct {
+		mode      isolation.Mode
+		badDigest bool
+		wantErr   string
+	}{
+		"unsupported none": {
+			mode:    isolation.ModeNone,
+			wantErr: `cannot operate isolation mode "none"`,
+		},
+		"none checksum mismatch": {
+			mode:      isolation.ModeNone,
+			badDigest: true,
+			wantErr:   "SHA-256 does not match",
+		},
+		"unsupported OCI": {
+			mode:    isolation.ModeContainer,
+			wantErr: `cannot operate isolation mode "container"`,
+		},
+		"OCI checksum mismatch": {
+			mode:      isolation.ModeContainer,
+			badDigest: true,
+			wantErr:   "SHA-256 does not match",
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
 
-	paths := testAgentUpgradePaths(t)
-	writeTestFile(t, paths.BinaryPath, "previous")
-	if err := ensureUpgradeLayout(t.Context(), discardLogger(), paths); err != nil {
-		t.Fatal(err)
+			paths := testAgentUpgradePaths(t)
+			writeTestFile(t, paths.BinaryPath, "previous")
+			marker := filepath.Join(t.TempDir(), "executed")
+			candidate := agentUpgradeProbeScript(paths, marker)
+			candidate += "if [ \"$1\" = version ]; then exit 0; fi\necho candidate-secret\necho candidate-secret >&2\nexit 1\n"
+			archive := agentUpgradeTestArchive(t, candidate)
+			digest := sha256.Sum256(archive)
+			expectedDigest := hex.EncodeToString(digest[:])
+			if tc.badDigest {
+				expectedDigest = strings.Repeat("0", 64)
+			}
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if _, err := w.Write(archive); err != nil {
+					t.Error(err)
+				}
+			}))
+			defer server.Close()
+
+			helper := filepath.Join(t.TempDir(), "helper")
+			writeExecutable(t, helper, "unchanged")
+			executor := &HostUpgrade{
+				log:         discardLogger(),
+				paths:       paths,
+				mode:        tc.mode,
+				signals:     NewUpgradeSignalStore(paths.SignalPath),
+				helperPaths: map[string]string{"kube1": helper},
+			}
+			if err := executor.signals.RecordPending("upgrade", "kube1", "initiator"); err != nil {
+				t.Fatal(err)
+			}
+			request := UpgradeRequest{DownloadURL: server.URL + "?sig=url-secret", SHA256: expectedDigest}
+			stageErr := executor.Stage(t.Context(), request)
+			if stageErr == nil || !strings.Contains(stageErr.Error(), tc.wantErr) {
+				t.Fatalf("Stage error = %v, want %q", stageErr, tc.wantErr)
+			}
+			if strings.Contains(stageErr.Error(), "secret") {
+				t.Fatalf("Stage error exposes secret: %v", stageErr)
+			}
+			assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
+			assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)
+			assertAgentUpgradeFileContent(t, helper, "unchanged")
+			signal, err := executor.signals.Read()
+			if err != nil || signal == nil || signal.CandidatePath != paths.GreenPath || signal.SwitchCommitted {
+				t.Fatalf("signal after refusal = %#v, %v", signal, err)
+			}
+			if tc.badDigest {
+				if _, err := os.Stat(marker); !os.IsNotExist(err) {
+					t.Fatalf("unverified candidate executed: %v", err)
+				}
+			} else {
+				var exitErr *exec.ExitError
+				if !errors.As(stageErr, &exitErr) || exitErr.ExitCode() != 1 {
+					t.Fatalf("Stage error = %v, want candidate exit status 1", stageErr)
+				}
+				want := fmt.Sprintf("%s|version||%s\n%s|supports-isolation|%s|%s\n", paths.GreenPath, paths.BluePath, paths.GreenPath, tc.mode, paths.BluePath)
+				assertAgentUpgradeFileContent(t, marker, want)
+			}
+			if err := executor.Abort(t.Context()); err != nil {
+				t.Fatal(err)
+			}
+			if signal, err := executor.signals.Read(); err != nil || signal != nil {
+				t.Fatalf("signal after abort = %#v, %v", signal, err)
+			}
+			assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
+			assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)
+			assertAgentUpgradeFileContent(t, helper, "unchanged")
+		})
 	}
-	if err := installAndSwitchBinary(t.Context(), discardLogger(), server.URL, strings.Repeat("0", 64), paths); err == nil || !strings.Contains(err.Error(), "SHA-256 does not match") {
-		t.Fatalf("checksum error = %v", err)
-	}
-	if _, err := os.Stat(marker); !os.IsNotExist(err) {
-		t.Fatalf("unverified candidate executed: %v", err)
-	}
-	assertResolvedPath(t, paths.CurrentPath, paths.BluePath)
-	assertResolvedPath(t, paths.LastGoodPath, paths.BluePath)
+}
+
+func agentUpgradeProbeScript(paths UpgradePaths, marker string) string {
+	return fmt.Sprintf(`#!/bin/sh
+printf '%%s|%%s|%%s|%%s\n' "$0" "$1" "$2" "$(readlink %q)" >> %q
+`, paths.CurrentPath, marker)
+}
+
+func TestCheckIsolationSupportPropagatesCancellation(t *testing.T) {
+	t.Parallel()
+
+	t.Run("before launch", func(t *testing.T) {
+		t.Parallel()
+
+		ctx, cancel := context.WithCancel(t.Context())
+		cancel()
+		if err := checkIsolationSupport(ctx, "/unused", isolation.ModeNone); !errors.Is(err, context.Canceled) {
+			t.Fatalf("checkIsolationSupport error = %v, want context.Canceled", err)
+		}
+	})
+
+	t.Run("during probe", func(t *testing.T) {
+		t.Parallel()
+
+		dir := t.TempDir()
+		readyPath := filepath.Join(dir, "ready")
+		if err := syscall.Mkfifo(readyPath, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		ready, err := os.OpenFile(readyPath, os.O_RDWR, 0) //nolint:gosec // test-only FIFO
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer ready.Close()
+		candidate := filepath.Join(dir, "candidate")
+		writeExecutable(t, candidate, fmt.Sprintf("#!/bin/sh\nprintf ready > %q\nexec sleep 30\n", readyPath))
+
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		result := make(chan error, 1)
+		go func() {
+			result <- checkIsolationSupport(ctx, candidate, isolation.ModeNone)
+		}()
+		readyResult := make(chan error, 1)
+		go func() {
+			_, err := io.ReadFull(ready, make([]byte, len("ready")))
+			readyResult <- err
+		}()
+		select {
+		case err := <-result:
+			t.Fatalf("probe exited before signaling readiness: %v", err)
+		case err := <-readyResult:
+			if err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		cancel()
+		if err := <-result; !errors.Is(err, context.Canceled) {
+			t.Fatalf("checkIsolationSupport error = %v, want context.Canceled", err)
+		}
+	})
 }

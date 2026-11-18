@@ -6,6 +6,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestHostUpgradeJudgmentMechanics(t *testing.T) {
@@ -27,6 +29,7 @@ func TestHostUpgradeJudgmentMechanics(t *testing.T) {
 	writeExecutable(t, worker, "candidate")
 	executor := &HostUpgrade{
 		paths:             paths,
+		mode:              isolation.ModeNSpawn,
 		helperPaths:       map[string]string{"kube1": worker},
 		runningExecutable: func() (string, error) { return paths.BluePath, nil },
 	}
