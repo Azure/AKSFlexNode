@@ -8,7 +8,7 @@ require (
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v8 v8.3.0-beta.2
 	github.com/Azure/azure-sdk-for-go/sdk/resourcemanager/containerservice/armcontainerservice/v9 v9.8.0-beta.1
 	github.com/Azure/kubelogin v0.2.22
-	github.com/Azure/unbounded v0.26.1-0.20261119075214-2b7716904b70
+	github.com/Azure/unbounded v0.26.1-0.20261119185523-2640bb6d329d
 	github.com/distribution/reference v0.6.0
 	github.com/go-logr/logr v1.4.4
 	github.com/google/renameio/v2 v2.0.2
@@ -20,7 +20,7 @@ require (
 	k8s.io/apimachinery v0.37.2
 	k8s.io/client-go v0.37.2
 	k8s.io/utils v0.0.0-20260626114624-be93311217bd
-	sigs.k8s.io/controller-runtime v0.25.2
+	sigs.k8s.io/controller-runtime v0.25.3
 	sigs.k8s.io/yaml v1.6.0
 )
 
