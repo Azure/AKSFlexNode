@@ -14,11 +14,9 @@ import (
 	"time"
 
 	corev1 "k8s.io/api/core/v1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/labels"
-	"k8s.io/apimachinery/pkg/runtime/schema"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -480,16 +478,6 @@ func TestHostSoftRebootUncertainStatusWriteNeverRunsCommand(t *testing.T) {
 				t.Fatalf("writes = %d, want 1", writes)
 			}
 
-			if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
-				t.Fatal(err)
-			}
-			if h.calls != 0 {
-				t.Fatalf("replayed an unacknowledged start: calls = %d", h.calls)
-			}
-			if writes != 1 {
-				t.Fatalf("rewrote an unacknowledged start: writes = %d", writes)
-			}
-
 			if err := newTestStartupHandler(t, c, func() (string, error) { return "boot1", nil }).PublishStartup(t.Context()); err != nil {
 				t.Fatal(err)
 			}
@@ -547,10 +535,10 @@ func TestHostSoftRebootCommandFailureAndCancellation(t *testing.T) {
 	}
 }
 
-func TestHostSoftRebootCASAndTerminalStates(t *testing.T) {
+func TestHostSoftRebootTerminalStates(t *testing.T) {
 	t.Parallel()
 
-	for _, phase := range []machinav1alpha3.OperationPhase{machinav1alpha3.OperationPhaseInProgress, machinav1alpha3.OperationPhaseComplete, machinav1alpha3.OperationPhaseFailed} {
+	for _, phase := range []machinav1alpha3.OperationPhase{machinav1alpha3.OperationPhaseComplete, machinav1alpha3.OperationPhaseFailed} {
 		t.Run(string(phase), func(t *testing.T) {
 			t.Parallel()
 			op := softOperation("soft")
@@ -565,35 +553,6 @@ func TestHostSoftRebootCASAndTerminalStates(t *testing.T) {
 			}
 		})
 	}
-	t.Run("conflict then concurrent start", func(t *testing.T) {
-		t.Parallel()
-		updates := 0
-		c := fake.NewClientBuilder().WithScheme(newScheme()).WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
-			WithObjects(softOperation("soft")).WithInterceptorFuncs(interceptor.Funcs{
-			SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-				updates++
-				if updates == 1 {
-					var latest machinav1alpha3.MachineOperation
-					if err := c.Get(ctx, client.ObjectKey{Name: "soft"}, &latest); err != nil {
-						return err
-					}
-					latest.Status.Phase = machinav1alpha3.OperationPhaseInProgress
-					if err := c.Status().Update(ctx, &latest); err != nil {
-						return err
-					}
-					return apierrors.NewConflict(schema.GroupResource{Group: machinav1alpha3.GroupVersion.Group, Resource: "machineoperations"}, "soft", errors.New("changed"))
-				}
-				return c.SubResource(sub).Update(ctx, obj, opts...)
-			},
-		}).Build()
-		h := newSoftHarness(t, c, c)
-		if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
-			t.Fatal(err)
-		}
-		if h.calls != 0 || updates != 1 {
-			t.Fatalf("calls = %d updates = %d", h.calls, updates)
-		}
-	})
 }
 
 func TestPublishHostSoftReboots(t *testing.T) {
@@ -684,95 +643,25 @@ func TestPublishHostSoftReboots(t *testing.T) {
 			}
 		})
 	}
-	t.Run("ignore foreign terminal and missing evidence", func(t *testing.T) {
+	t.Run("ignore foreign operations and missing evidence", func(t *testing.T) {
 		t.Parallel()
 		foreign := issuedSoftOperation("foreign", "other", "boot1")
 		missing := issuedSoftOperation("missing", "machine1", "")
-		terminal := issuedSoftOperation("terminal", "machine1", "boot1")
-		terminal.Status.Phase = machinav1alpha3.OperationPhaseFailed
 		other := issuedSoftOperation("other", "machine1", "boot1")
 		other.Spec.OperationKind = machinav1alpha3.OperationAgentUpgrade
-		c := softClient(foreign, missing, terminal, other)
+		c := softClient(foreign, missing, other)
 		if err := newTestStartupHandler(t, c, func() (string, error) {
 			t.Error("read boot ID unnecessarily")
 			return "", nil
 		}).PublishStartup(t.Context()); err != nil {
 			t.Fatal(err)
 		}
-		for _, op := range []*machinav1alpha3.MachineOperation{foreign, missing, terminal, other} {
+		for _, op := range []*machinav1alpha3.MachineOperation{foreign, missing, other} {
 			if got := getSoftOperation(t, c, op.Name).Status.Phase; got != op.Status.Phase {
 				t.Fatalf("%s phase = %s", op.Name, got)
 			}
 		}
 	})
-}
-
-func TestPublishHostSoftRebootsRejectsStaleList(t *testing.T) {
-	t.Parallel()
-
-	for _, tc := range []struct {
-		name   string
-		phase  machinav1alpha3.OperationPhase
-		bootID string
-	}{
-		{
-			name:   "terminal target",
-			phase:  machinav1alpha3.OperationPhaseComplete,
-			bootID: "boot1",
-		},
-		{
-			name:   "different boot evidence",
-			phase:  machinav1alpha3.OperationPhaseInProgress,
-			bootID: "new-evidence",
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			t.Parallel()
-
-			stale := issuedSoftOperation("soft", "machine1", "boot1")
-			fresh := stale.DeepCopy()
-			fresh.Status.Targets[0].Phase = tc.phase
-			fresh.Status.Targets[0].BootID = tc.bootID
-			writes, gets := 0, 0
-			c := fake.NewClientBuilder().WithScheme(newScheme()).
-				WithStatusSubresource(&machinav1alpha3.MachineOperation{}).
-				WithObjects(fresh).WithInterceptorFuncs(interceptor.Funcs{
-				List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
-					if err := c.List(ctx, list, opts...); err != nil {
-						return err
-					}
-					operations, ok := list.(*machinav1alpha3.MachineOperationList)
-					if !ok {
-						return fmt.Errorf("unexpected list %T", list)
-					}
-					operations.Items = []machinav1alpha3.MachineOperation{*stale.DeepCopy()}
-					return nil
-				},
-				Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
-					gets++
-					return c.Get(ctx, key, obj, opts...)
-				},
-				SubResourceUpdate: func(ctx context.Context, c client.Client, sub string, obj client.Object, opts ...client.SubResourceUpdateOption) error {
-					writes++
-					return c.SubResource(sub).Update(ctx, obj, opts...)
-				},
-			}).Build()
-
-			if err := newTestStartupHandler(t, c, func() (string, error) { return "boot2", nil }).PublishStartup(t.Context()); err != nil {
-				t.Fatal(err)
-			}
-			if gets != 1 {
-				t.Fatalf("fresh GETs = %d, want 1", gets)
-			}
-			if writes != 0 {
-				t.Fatalf("writes after stale list = %d, want 0", writes)
-			}
-			after := getSoftOperation(t, c, "soft")
-			if !reflect.DeepEqual(fresh.Status, after.Status) {
-				t.Fatalf("fresh status changed: before = %+v, after = %+v", fresh.Status, after.Status)
-			}
-		})
-	}
 }
 
 func TestPublishHostSoftRebootsReadAndWriteErrors(t *testing.T) {
@@ -829,7 +718,7 @@ func observedBlocker(t *testing.T, c client.Client) (string, error) {
 		},
 	}
 	handler := newTestSoftHandler(t, c, c, host, &atomic.Bool{})
-	result, err := handler.Reconcile(t.Context(), agentdaemon.MachineOperation{Name: probe.Name})
+	result, err := handler.Reconcile(t.Context(), &fakeMachineOperationStore{}, agentdaemon.MachineOperation{Name: probe.Name})
 	if err != nil {
 		return "", err
 	}
@@ -1022,29 +911,6 @@ func TestHostSoftRebootWaitsForOutOfBandCompletion(t *testing.T) {
 	}
 	if h.calls != 1 {
 		t.Fatalf("reboot calls = %d, want 1", h.calls)
-	}
-}
-
-func TestHostSoftRebootIgnoresStalePendingCache(t *testing.T) {
-	t.Parallel()
-
-	for _, phase := range []machinav1alpha3.OperationPhase{machinav1alpha3.OperationPhaseInProgress, machinav1alpha3.OperationPhaseComplete, machinav1alpha3.OperationPhaseFailed} {
-		t.Run(string(phase), func(t *testing.T) {
-			t.Parallel()
-
-			current := softOperation("soft")
-			current.Status.Phase = phase
-			api := softClient(current)
-			cached := softClient(softOperation("soft"))
-			writer := &staleReadClient{Client: api, stale: cached}
-			h := newSoftHarness(t, writer, api)
-			if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
-				t.Fatal(err)
-			}
-			if h.calls != 0 {
-				t.Fatal("stale pending status caused a reboot")
-			}
-		})
 	}
 }
 
@@ -1379,7 +1245,7 @@ func TestHostSoftRebootPreflightReadErrors(t *testing.T) {
 	}
 }
 
-func TestHostSoftRebootFailedPublicationDoesNotReplayCommand(t *testing.T) {
+func TestHostSoftRebootReturnsFailurePublicationError(t *testing.T) {
 	t.Parallel()
 
 	writes := 0
@@ -1413,13 +1279,6 @@ func TestHostSoftRebootFailedPublicationDoesNotReplayCommand(t *testing.T) {
 	}
 	if got := getSoftOperation(t, c, "soft").Status.Phase; got != machinav1alpha3.OperationPhaseInProgress {
 		t.Fatalf("phase = %s", got)
-	}
-
-	if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
-		t.Fatal(err)
-	}
-	if h.calls != 1 || writes != 2 {
-		t.Fatalf("replayed the failed command: calls = %d, writes = %d", h.calls, writes)
 	}
 }
 

@@ -50,7 +50,7 @@ func (t flexHostSoftRebootTarget) MatchSelector(
 
 func (h *machineOperationHandlers) reconcileHostSoftReboot(
 	ctx context.Context,
-	_ agentdaemon.MachineOperationStore[int64],
+	store agentdaemon.MachineOperationStore[int64],
 	op agentdaemon.MachineOperation,
 ) (ctrl.Result, error) {
 	lock, err := h.agentUpgrade.Acquire()
@@ -66,5 +66,5 @@ func (h *machineOperationHandlers) reconcileHostSoftReboot(
 		}
 	}()
 
-	return h.softReboot.Reconcile(ctx, op)
+	return h.softReboot.Reconcile(ctx, store, op)
 }
