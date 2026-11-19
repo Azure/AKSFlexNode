@@ -311,7 +311,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 	if err != nil {
 		return nil, err
 	}
-	if active.State.Isolation != "" && active.State.Isolation != r.cfg.Bootstrap.Isolation {
+	if active.State.Isolation != r.cfg.Bootstrap.Isolation {
 		return nil, fmt.Errorf("worker isolation change requires reset")
 	}
 	cfg, err := configForGoalState(ctx, r.log, r.cfg, r.refresher, goal)
@@ -345,18 +345,19 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 	}
 	next := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
 	next.Isolation = cfg.Bootstrap.Isolation
-	if next.Isolation == isolation.ModeNone {
+	if next.Isolation == isolation.ModeNone || next.Isolation == isolation.ModeContainer {
 		if resolved.AgentConfig == nil || previous.Config == nil {
-			return nil, fmt.Errorf("none repave requires applied and target runtime configurations")
+			return nil, fmt.Errorf("%s repave requires applied and target runtime configurations", next.Isolation)
 		}
 		next.NodeConfig = resolved.AgentConfig.DeepCopy()
 	}
 
-	if err := r.runtime.Prepare(r.log, input).Do(ctx); err != nil {
+	if err := r.runtime.PrepareUpgrade(r.log, input).Do(ctx); err != nil {
 		return nil, fmt.Errorf("prepare worker upgrade: %w", err)
 	}
 	var tasks []phases.Task
-	if cfg.Bootstrap.Isolation == isolation.ModeNone {
+	switch cfg.Bootstrap.Isolation {
+	case isolation.ModeNone:
 		view, err := r.runtime.Worker(r.log, previous)
 		if err != nil {
 			return nil, fmt.Errorf("resolve worker for hub cleanup: %w", err)
@@ -364,8 +365,11 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 		if err := yurthub.ResetHost(ctx, hubWorker(active.Name, view)); err != nil {
 			return nil, fmt.Errorf("clean host hub before repave: %w", err)
 		}
-	} else {
+	case isolation.ModeNSpawn:
 		tasks = append(tasks, r.hookUnits(r.log))
+	case isolation.ModeContainer:
+	default:
+		return nil, fmt.Errorf("unsupported worker isolation %q", cfg.Bootstrap.Isolation)
 	}
 	tasks = append(tasks,
 		r.runtime.Start(r.log, input),

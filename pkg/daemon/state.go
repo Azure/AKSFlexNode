@@ -145,6 +145,11 @@ func (s *fileStateStore) Load(context.Context) (*State, error) {
 			return nil, fmt.Errorf("applied none worker has no matching runtime configuration")
 		}
 	}
+	if state.Isolation == isolation.ModeContainer {
+		if !validActiveMachine(state.ActiveMachine) || state.NodeConfig == nil || state.NodeConfig.Isolation != string(isolation.ModeContainer) {
+			return nil, fmt.Errorf("applied OCI worker has invalid slot or runtime configuration")
+		}
+	}
 	return &state, nil
 }
 

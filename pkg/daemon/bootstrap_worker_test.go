@@ -3,6 +3,8 @@ package daemon
 import (
 	"context"
 	"log/slog"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
@@ -31,6 +33,16 @@ func TestContainerizedAgentModeValidation(t *testing.T) {
 			wantErr:       true,
 		},
 		{
+			name:          "containerized OCI",
+			mode:          isolation.ModeContainer,
+			containerized: true,
+			wantErr:       true,
+		},
+		{
+			name: "host OCI",
+			mode: isolation.ModeContainer,
+		},
+		{
 			name: "host none",
 			mode: isolation.ModeNone,
 		},
@@ -40,6 +52,94 @@ func TestContainerizedAgentModeValidation(t *testing.T) {
 
 			if err := ValidateAgentDeployment(tc.mode, tc.containerized); (err != nil) != tc.wantErr {
 				t.Fatalf("validation = %v", err)
+			}
+		})
+	}
+}
+
+func TestValidateWorkerBootstrapRejectsIncompatibleDeployment(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name          string
+		mode          isolation.Mode
+		applied       *State
+		containerized bool
+		want          string
+	}{
+		{
+			name:    "wrong applied mode",
+			mode:    isolation.ModeContainer,
+			applied: &State{Isolation: isolation.ModeNSpawn},
+			want:    "isolation change requires reset",
+		},
+		{
+			name:          "containerized agent",
+			mode:          isolation.ModeContainer,
+			containerized: true,
+			want:          "containerized agent does not yet support",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			cfg := &config.Config{
+				Bootstrap: config.BootstrapConfig{
+					Isolation: tc.mode,
+				},
+			}
+			err := ValidateWorkerBootstrap(cfg, tc.applied, tc.containerized)
+			if err == nil || !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("validation error = %v, want %q", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestOCIStateLoadRejectsInvalidAppliedConfiguration(t *testing.T) {
+	t.Parallel()
+
+	for _, tc := range []struct {
+		name   string
+		slot   string
+		config *agentconfig.AgentConfig
+	}{
+		{
+			name: "invalid slot",
+			slot: "kube3",
+			config: &agentconfig.AgentConfig{
+				Isolation: string(isolation.ModeContainer),
+			},
+		},
+		{
+			name: "missing config",
+			slot: "kube1",
+		},
+		{
+			name: "wrong config mode",
+			slot: "kube2",
+			config: &agentconfig.AgentConfig{
+				Isolation: string(isolation.ModeNone),
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+
+			store, err := newFileStateStore(filepath.Join(t.TempDir(), "state.json"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			applied := &State{
+				Isolation:     isolation.ModeContainer,
+				ActiveMachine: tc.slot,
+				NodeConfig:    tc.config,
+			}
+			if err := store.Save(t.Context(), applied); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := store.Load(t.Context()); err == nil || !strings.Contains(err.Error(), "applied OCI worker has invalid slot or runtime configuration") {
+				t.Fatalf("load error = %v", err)
 			}
 		})
 	}
@@ -78,7 +178,7 @@ func TestBootstrapStateSelectsInstalledWorker(t *testing.T) {
 			reapply: true,
 		},
 		{
-			name:    "future alternate slot",
+			name:    "OCI alternate slot",
 			mode:    isolation.ModeContainer,
 			applied: alternate,
 			want:    alternate,
@@ -94,6 +194,11 @@ func TestBootstrapStateSelectsInstalledWorker(t *testing.T) {
 			name:    "missing applied config",
 			mode:    isolation.ModeNone,
 			applied: &State{ActiveMachine: "kube1"},
+			wantErr: true,
+		},
+		{
+			name:    "unknown isolation",
+			mode:    "unknown",
 			wantErr: true,
 		},
 	} {

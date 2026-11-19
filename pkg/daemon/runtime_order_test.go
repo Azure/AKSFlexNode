@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	machinav1alpha3 "github.com/Azure/unbounded/api/machina/v1alpha3"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
@@ -35,7 +36,7 @@ func (r *recordingRuntime) task(name string) phases.Task {
 	}
 }
 
-func (r *recordingRuntime) Prepare(log *slog.Logger, input agentruntime.Inputs) phases.Task {
+func (r *recordingRuntime) PrepareUpgrade(log *slog.Logger, input agentruntime.Inputs) phases.Task {
 	r.machine = input.Previous.Slot
 	return phases.Serial(log, r.task("stop"), r.task("network"))
 }
@@ -175,6 +176,7 @@ func TestRepaveExecutionOrderingAndFailure(t *testing.T) {
 			worker := &recordingRuntime{events: &events, fail: tc.fail}
 			store := &recordingStateStore{
 				state: &State{
+					Isolation:              config.DefaultIsolationMode,
 					ActiveMachine:          goalstates.NSpawnMachineKube1,
 					AppliedSettingsVersion: "old",
 				},

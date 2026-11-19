@@ -23,7 +23,14 @@ func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}}}
-	operator := &fakeWorkerRuntime{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}}
+	operator := &fakeWorkerRuntime{
+		state: &State{
+			Isolation:                config.DefaultIsolationMode,
+			AppliedSettingsVersion:   "41",
+			AppliedKubernetesVersion: "1.33.0",
+			ActiveMachine:            "kube1",
+		},
+	}
 	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
 	if err := repaves.reconcileOnce(context.Background()); err != nil {
@@ -97,12 +104,16 @@ func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
 func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator *fakeWorkerRuntime) *repaveReconciler {
 	t.Helper()
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
-		Log:       slog.Default(),
-		Machines:  machines,
-		Client:    kubeClient,
-		Runtime:   operator,
-		State:     operator,
-		Config:    &config.Config{},
+		Log:      slog.Default(),
+		Machines: machines,
+		Client:   kubeClient,
+		Runtime:  operator,
+		State:    operator,
+		Config: &config.Config{
+			Bootstrap: config.BootstrapConfig{
+				Isolation: config.DefaultIsolationMode,
+			},
+		},
 		Refresher: noopBootstrapDataRefresher{},
 		HookUnits: func(*slog.Logger) phases.Task { return testTask{name: "hooks"} },
 		Uninstall: operator.uninstall,
@@ -200,8 +211,12 @@ func (f *fakeWorkerRuntime) Restart(_ *slog.Logger, input agentruntime.Inputs) p
 	}
 }
 
-func (f *fakeWorkerRuntime) Prepare(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
+func (f *fakeWorkerRuntime) PrepareUpgrade(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
 	return testTask{name: "prepare-upgrade"}
+}
+
+func (f *fakeWorkerRuntime) Recover(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
+	return testTask{name: "recover"}
 }
 
 func (f *fakeWorkerRuntime) Retire(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {

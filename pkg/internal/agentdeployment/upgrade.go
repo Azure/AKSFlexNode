@@ -177,7 +177,7 @@ func (e *HostUpgrade) Stage(ctx context.Context, request UpgradeRequest) error {
 	}
 	if e.mode != isolation.ModeNone {
 		if err := copyExecutable(current, e.helperPaths[signal.ActiveMachine]); err != nil {
-			return e.rollbackAfterStage(ctx, fmt.Errorf("synchronize active nspawn agent binary: %w", err))
+			return e.rollbackAfterStage(ctx, fmt.Errorf("synchronize worker credential helper: %w", err))
 		}
 	}
 	return nil
@@ -281,7 +281,7 @@ func scheduleAgentUnitCommand(
 // agentRestartTimerAccuracy bounds how late systemd may fire the timer that restarts the agent.
 const agentRestartTimerAccuracy = "100ms"
 
-// RecoverAgentUpgrade records failure and restores both host and active nspawn
+// RecoverAgentUpgrade records failure and restores both host and active worker
 // binaries. It is invoked by the systemd recovery unit through last-good. In
 // the agent's container, it restores the last-good image and restarts the
 // agent's unit, which the recovery script does on a host.
@@ -376,7 +376,7 @@ func validateStartedAgentUpgrade(paths UpgradePaths, signal *UpgradeSignal, mode
 		return fmt.Errorf("AgentUpgrade was interrupted before switching the candidate binary")
 	}
 	if !validNspawnMachine(signal.ActiveMachine) {
-		return fmt.Errorf("AgentUpgrade has no valid active nspawn machine")
+		return fmt.Errorf("AgentUpgrade has no valid active worker")
 	}
 	if mode == isolation.ModeNone {
 		return nil
@@ -384,10 +384,10 @@ func validateStartedAgentUpgrade(paths UpgradePaths, signal *UpgradeSignal, mode
 
 	equal, err := filesHaveEqualSHA256(current, helperPaths[signal.ActiveMachine])
 	if err != nil {
-		return fmt.Errorf("verify synchronized nspawn agent binary: %w", err)
+		return fmt.Errorf("verify synchronized worker credential helper: %w", err)
 	}
 	if !equal {
-		return fmt.Errorf("upgraded host and nspawn agent binaries do not match")
+		return fmt.Errorf("upgraded host and worker agent binaries do not match")
 	}
 	return nil
 }

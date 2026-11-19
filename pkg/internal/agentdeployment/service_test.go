@@ -407,6 +407,21 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 			appliedMode: isolation.ModeNone,
 			golden:      "aks-flex-node-agent-none-arc.service.golden",
 		},
+		"OCI without ARC": {
+			appliedMode: isolation.ModeContainer,
+			golden:      "aks-flex-node-agent-oci.service.golden",
+		},
+		"OCI with ARC": {
+			cfg: config.Config{
+				Azure: config.AzureConfig{
+					Arc: &config.ArcConfig{
+						Enabled: true,
+					},
+				},
+			},
+			appliedMode: isolation.ModeContainer,
+			golden:      "aks-flex-node-agent-oci-arc.service.golden",
+		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {

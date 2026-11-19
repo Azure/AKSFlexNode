@@ -59,31 +59,64 @@ func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 	t.Parallel()
 
 	for _, tc := range []struct {
-		name    string
-		present bool
-		fail    string
-		want    []string
+		name       string
+		native     bool
+		oci        bool
+		failWorker string
+		failStage  string
+		want       []string
 	}{
 		{
-			name:    "both workers",
-			present: true,
-			want:    []string{"nspawn-stop", "none-stop", "nspawn-destroy", "none-destroy", "shared"},
-		},
-		{
-			name: "native absent",
+			name: "nspawn only",
 			want: []string{"nspawn-stop", "nspawn-destroy", "shared"},
 		},
 		{
-			name:    "native stop fails",
-			present: true,
-			fail:    "stop",
-			want:    []string{"nspawn-stop", "none-stop"},
+			name:   "native worker",
+			native: true,
+			want:   []string{"nspawn-stop", "none-stop", "nspawn-destroy", "none-destroy", "shared"},
 		},
 		{
-			name:    "native destroy fails",
-			present: true,
-			fail:    "destroy",
-			want:    []string{"nspawn-stop", "none-stop", "nspawn-destroy", "none-destroy"},
+			name: "OCI worker",
+			oci:  true,
+			want: []string{"nspawn-stop", "oci-stop", "nspawn-destroy", "oci-destroy", "shared"},
+		},
+		{
+			name:   "all traces stop before destruction",
+			native: true,
+			oci:    true,
+			want:   []string{"nspawn-stop", "none-stop", "oci-stop", "nspawn-destroy", "none-destroy", "oci-destroy", "shared"},
+		},
+		{
+			name:       "native stop failure blocks all destruction",
+			native:     true,
+			oci:        true,
+			failWorker: "none",
+			failStage:  "stop",
+			want:       []string{"nspawn-stop", "none-stop"},
+		},
+		{
+			name:       "OCI stop failure blocks all destruction",
+			native:     true,
+			oci:        true,
+			failWorker: "oci",
+			failStage:  "stop",
+			want:       []string{"nspawn-stop", "none-stop", "oci-stop"},
+		},
+		{
+			name:       "native destroy failure blocks shared cleanup",
+			native:     true,
+			oci:        true,
+			failWorker: "none",
+			failStage:  "destroy",
+			want:       []string{"nspawn-stop", "none-stop", "oci-stop", "nspawn-destroy", "none-destroy"},
+		},
+		{
+			name:       "OCI destroy failure blocks shared cleanup",
+			native:     true,
+			oci:        true,
+			failWorker: "oci",
+			failStage:  "destroy",
+			want:       []string{"nspawn-stop", "none-stop", "oci-stop", "nspawn-destroy", "none-destroy", "oci-destroy"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -91,7 +124,13 @@ func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 
 			var events []string
 			machine := &testResetWorker{name: "nspawn", events: &events}
-			native := &testResetWorker{name: "none", events: &events, present: tc.present, fail: tc.fail}
+			native := &testResetWorker{name: "none", events: &events, present: tc.native}
+			oci := &testResetWorker{name: "oci", events: &events, present: tc.oci}
+			for _, worker := range []*testResetWorker{native, oci} {
+				if worker.name == tc.failWorker {
+					worker.fail = tc.failStage
+				}
+			}
 			record := func(name string) phases.Task {
 				return hostnode.Func(name, func(context.Context) error {
 					events = append(events, name)
@@ -99,16 +138,16 @@ func TestResetPlanDiscoveryAndOrdering(t *testing.T) {
 				})
 			}
 			log := slog.New(slog.DiscardHandler)
-			plan := discoverReset(log, machine, native, record("shared"))
-			if plan.HasHostNativeState() != tc.present {
+			plan := discoverReset(log, machine, native, oci, record("shared"))
+			if plan.HasHostNativeState() != tc.native || (plan.container != nil) != tc.oci {
 				t.Fatal("incorrect discovery")
 			}
 			err := phases.Serial(log, plan.Stop(), plan.Finish()).Do(t.Context())
-			if (err != nil) != (tc.fail != "") {
+			if (err != nil) != (tc.failStage != "") {
 				t.Fatalf("reset error = %v", err)
 			}
-			if native.discovered != 1 {
-				t.Fatalf("discovery calls = %d", native.discovered)
+			if native.discovered != 1 || oci.discovered != 1 {
+				t.Fatalf("discovery calls: none=%d, OCI=%d; want one each", native.discovered, oci.discovered)
 			}
 			if !slices.Equal(events, tc.want) {
 				t.Fatalf("events = %v, want %v", events, tc.want)

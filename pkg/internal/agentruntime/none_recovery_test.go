@@ -130,7 +130,7 @@ func TestNoneRecoveryUsesPersistedConfig(t *testing.T) {
 				Config: cfg,
 				Node:   Node{Slot: "kube1", Config: applied},
 			}
-			if err := runtime.Prepare(log, input).Do(t.Context()); err != nil {
+			if err := runtime.Recover(log, input).Do(t.Context()); err != nil {
 				t.Fatal(err)
 			}
 			if rolledBack := stops > beforeRecovery; rolledBack == tc.persisted {

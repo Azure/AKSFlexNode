@@ -26,7 +26,9 @@ func TestBootstrapOrdersHooksBeforeWorkerAndState(t *testing.T) {
 		NodeStart: &goalstates.NodeStart{},
 	}
 	log := slog.New(slog.DiscardHandler)
-	cfg := &config.Config{}
+	cfg := &config.Config{
+		Bootstrap: config.BootstrapConfig{Isolation: isolation.ModeNSpawn},
+	}
 	input := agentruntime.Inputs{
 		Config: cfg,
 		Node: agentruntime.Node{
@@ -72,7 +74,11 @@ func (r *bootstrapTestRuntime) Restart(_ *slog.Logger, input agentruntime.Inputs
 	})
 }
 
-func (r *bootstrapTestRuntime) Prepare(*slog.Logger, agentruntime.Inputs) phases.Task {
+func (r *bootstrapTestRuntime) PrepareUpgrade(*slog.Logger, agentruntime.Inputs) phases.Task {
+	return hostnode.Func("prepare-upgrade", func(context.Context) error { return nil })
+}
+
+func (r *bootstrapTestRuntime) Recover(*slog.Logger, agentruntime.Inputs) phases.Task {
 	return hostnode.Func("recover", func(context.Context) error {
 		r.events = append(r.events, "recover")
 		return nil
@@ -163,7 +169,12 @@ func (s *bootstrapTestStore) Delete(context.Context) error {
 
 func bootstrapConfig(mode isolation.Mode) *config.Config {
 	return &config.Config{
-		Bootstrap:  config.BootstrapConfig{Isolation: mode},
+		Bootstrap: config.BootstrapConfig{
+			Isolation: mode,
+			Experimental: &config.ExperimentalConfig{
+				ContainerIsolation: mode == isolation.ModeContainer,
+			},
+		},
 		Components: config.ComponentsConfig{Kubernetes: "1.34.0"},
 		Agent:      config.AgentConfig{NodeName: "node1"},
 		Azure: config.AzureConfig{
