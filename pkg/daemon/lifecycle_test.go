@@ -318,7 +318,10 @@ func TestEnsureNSpawnLifecycleUnits(t *testing.T) {
 func TestStartNodeEnsuresTheNSpawnLifecycleUnitsFirst(t *testing.T) {
 	t.Parallel()
 
-	gs := &goalstates.MachineGoalState{RootFS: &goalstates.RootFS{}, NodeStart: &goalstates.NodeStart{}}
+	gs := &goalstates.MachineGoalState{
+		RootFS:    &goalstates.RootFS{MachineDir: t.TempDir()},
+		NodeStart: &goalstates.NodeStart{},
+	}
 	name := StartNode(&config.Config{}, slog.New(slog.DiscardHandler), "kube1", gs, nil, nil, &State{}).Name()
 	if want := "serial(ensure-nspawn-lifecycle-units, "; !strings.HasPrefix(name, want) {
 		t.Fatalf("StartNode() = %s, want it to start with %s", name, want)
