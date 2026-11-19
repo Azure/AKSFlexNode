@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	hostdaemon "github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 )
 
@@ -48,7 +49,7 @@ func newHostAgentUpgradeCommand() *cobra.Command {
 }
 
 func runHostAgentUpgradePreflight(ctx context.Context, output io.Writer, log *slog.Logger, candidate string) error {
-	plan, err := hostdaemon.PreflightHostAgentActivation(ctx, log, candidate)
+	plan, err := agentdeployment.PreflightHostAgentActivation(ctx, log, candidate)
 	if err != nil {
 		return err
 	}

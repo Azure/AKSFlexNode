@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentdeployment"
+
 	"github.com/Azure/AKSFlexNode/pkg/config"
 )
 
@@ -41,7 +43,7 @@ func TestBootstrapCredentialRESTConfigExecCredential(t *testing.T) {
 	cfg.Azure.ServicePrincipal = &config.ServicePrincipalConfig{TenantID: "tenant", ClientID: "client", ClientSecret: "secret"}
 	cfg.Components.Kubernetes = "1.34.0"
 
-	plugin := filepath.Join(t.TempDir(), "bin", binaryName)
+	plugin := filepath.Join(t.TempDir(), "bin", "aks-flex-node")
 	if err := os.MkdirAll(filepath.Dir(plugin), 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -148,10 +150,10 @@ func TestDaemonControllerCertificateOptions(t *testing.T) {
 func TestOpenGateAfterAgentUpgradeJudgment(t *testing.T) {
 	t.Parallel()
 
-	judged := &agentUpgradeSignal{OperationName: "upgrade", Failure: "the candidate failed"}
+	judged := &agentdeployment.UpgradeSignal{OperationName: "upgrade", Failure: "the candidate failed"}
 	tests := map[string]struct {
 		publishErrs []error
-		signal      *agentUpgradeSignal
+		signal      *agentdeployment.UpgradeSignal
 		convergeErr error
 		want        []string
 	}{
@@ -189,7 +191,7 @@ func TestOpenGateAfterAgentUpgradeJudgment(t *testing.T) {
 					}
 					return nil
 				},
-				func() (*agentUpgradeSignal, error) { return tc.signal, nil },
+				func() (*agentdeployment.UpgradeSignal, error) { return tc.signal, nil },
 				func(context.Context) error {
 					calls = append(calls, "converge")
 					return tc.convergeErr
