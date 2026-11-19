@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -23,8 +22,11 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
+	"github.com/Azure/AKSFlexNode/pkg/yurthub"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
@@ -71,7 +73,7 @@ type repaveReconciler struct {
 	log         *slog.Logger
 	machines    aksmachine.MachineClient
 	client      client.Client
-	runtime     workerRuntime
+	runtime     agentruntime.Runtime
 	state       stateStore
 	cfg         *config.Config
 	refresher   bootstrapDataRefresher
@@ -92,7 +94,7 @@ type repaveReconcilerOptions struct {
 	Log         *slog.Logger
 	Machines    aksmachine.MachineClient
 	Client      client.Client
-	Runtime     workerRuntime
+	Runtime     agentruntime.Runtime
 	State       stateStore
 	Config      *config.Config
 	Refresher   bootstrapDataRefresher
@@ -248,19 +250,23 @@ func (r *repaveReconciler) reconcileHub(ctx context.Context, machineSnap machine
 	if r.hub == nil || nodeSnap.node == nil || machineSnap.machine == nil {
 		return
 	}
-	worker, root := "", ""
+	var worker yurthub.Worker
 	if state != nil && validActiveMachine(state.ActiveMachine) {
-		worker = state.ActiveMachine
-		root = filepath.Join("/var/lib/machines", worker)
+		view, err := r.runtime.Worker(r.log, agentruntime.Node{Slot: state.ActiveMachine, Config: state.NodeConfig})
+		if err != nil {
+			r.log.Error("resolve worker for hub reconcile", "error", err)
+			return
+		}
+		worker = hubWorker(state.ActiveMachine, view)
 	}
-	if err := r.hub.Reconcile(ctx, machineSnap.machine.Goal.DisconnectToleranceEnabled, worker, root, nodeSnap.node); err != nil {
+	if err := r.hub.Reconcile(ctx, machineSnap.machine.Goal.DisconnectToleranceEnabled, worker, nodeSnap.node); err != nil {
 		r.log.Error("hub reconcile failed; will retry on a later read", "error", err)
 	}
 }
 
 // hubMachineReconciler runs on the same serialized queue as repave and MachineOperations.
 type hubMachineReconciler interface {
-	Reconcile(context.Context, *bool, string, string, *corev1.Node) error
+	Reconcile(context.Context, *bool, yurthub.Worker, *corev1.Node) error
 }
 
 func (r *repaveReconciler) machineSnapshot(ctx context.Context) (machineSnapshot, error) {
@@ -305,14 +311,19 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 	if err != nil {
 		return nil, err
 	}
+	if active.State.Isolation != "" && active.State.Isolation != r.cfg.Bootstrap.Isolation {
+		return nil, fmt.Errorf("worker isolation change requires reset")
+	}
 	cfg, err := configForGoalState(ctx, r.log, r.cfg, r.refresher, goal)
 	if err != nil {
 		return nil, err
 	}
-	oldMachine := active.Name
-	newMachine := goalstates.AlternateMachine(oldMachine)
-	r.log.Info("starting nspawn machine goal-state apply",
-		"oldMachine", oldMachine,
+	newMachine := goalstates.AlternateMachine(active.Name)
+	if cfg.Bootstrap.Isolation == isolation.ModeNone {
+		newMachine = active.Name
+	}
+	r.log.Info("starting worker goal-state apply",
+		"oldMachine", active.Name,
 		"newMachine", newMachine,
 		"settingsVersion", goal.SettingsVersion,
 		"kubernetesVersion", cfg.Components.Kubernetes,
@@ -321,16 +332,47 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 	if err != nil {
 		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
 	}
+	previous := agentruntime.Node{Slot: active.Name, Config: active.State.NodeConfig}
+	input := agentruntime.Inputs{
+		Config: cfg,
+		Node: agentruntime.Node{
+			Slot:      newMachine,
+			Config:    resolved.AgentConfig,
+			GoalState: resolved.GoalState,
+		},
+		Previous: &previous,
+		Archives: resolved.ContainerImageArchives,
+	}
 	next := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
-	tasks := phases.Serial(r.log,
-		r.runtime.Stop(r.log, oldMachine),
-		r.runtime.CleanupNetwork(r.log),
-		r.hookUnits(r.log),
-		r.runtime.Start(cfg, r.log, newMachine, resolved.GoalState, resolved.ContainerImageArchives),
+	next.Isolation = cfg.Bootstrap.Isolation
+	if next.Isolation == isolation.ModeNone {
+		if resolved.AgentConfig == nil || previous.Config == nil {
+			return nil, fmt.Errorf("none repave requires applied and target runtime configurations")
+		}
+		next.NodeConfig = resolved.AgentConfig.DeepCopy()
+	}
+
+	if err := r.runtime.Prepare(r.log, input).Do(ctx); err != nil {
+		return nil, fmt.Errorf("prepare worker upgrade: %w", err)
+	}
+	var tasks []phases.Task
+	if cfg.Bootstrap.Isolation == isolation.ModeNone {
+		view, err := r.runtime.Worker(r.log, previous)
+		if err != nil {
+			return nil, fmt.Errorf("resolve worker for hub cleanup: %w", err)
+		}
+		if err := yurthub.ResetHost(ctx, hubWorker(active.Name, view)); err != nil {
+			return nil, fmt.Errorf("clean host hub before repave: %w", err)
+		}
+	} else {
+		tasks = append(tasks, r.hookUnits(r.log))
+	}
+	tasks = append(tasks,
+		r.runtime.Start(r.log, input),
 		&saveStateTask{store: r.state, state: next},
-		r.runtime.Retire(r.log, oldMachine),
+		r.runtime.Retire(r.log, input),
 	)
-	if err := tasks.Do(ctx); err != nil {
+	if err := phases.Serial(r.log, tasks...).Do(ctx); err != nil {
 		return nil, fmt.Errorf("apply machine goal state: %w", err)
 	}
 	return next, nil
@@ -338,7 +380,7 @@ func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine
 
 func (r *repaveReconciler) resetDelete(ctx context.Context) error {
 	// Stage 1 clears local runtime/settings while keeping this daemon alive.
-	if err := phases.ExecuteTask(ctx, r.log, r.runtime.Reset(r.log)); err != nil {
+	if err := phases.ExecuteTask(ctx, r.log, ResetWorker(r.log, r.runtime, yurthub.ResetHostTask(r.log))); err != nil {
 		return err
 	}
 	if err := phases.ExecuteTask(ctx, r.log, r.clearConfig); err != nil {

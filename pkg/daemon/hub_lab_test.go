@@ -3,10 +3,10 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"log/slog"
 	"os"
-	"path/filepath"
 	"testing"
 	"time"
 
@@ -16,6 +16,8 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/kubeauth"
 	"github.com/Azure/AKSFlexNode/pkg/yurthub"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/nspawn"
 )
 
 // TestHubLab drives the production Hub reconciler and operations on a disposable,
@@ -68,12 +70,20 @@ func TestHubLab(t *testing.T) {
 		t.Fatal(err)
 	}
 	hub := yurthub.NewReconciler(slog.Default(), cfg.Agent.NodeName, cfg.Azure.TargetAgentPoolName, cfg.APIServerURL(), client.CoreV1().Nodes(), time.Duration(cfg.Agent.MachineReconcileInterval))
-	worker, root := "", ""
+	var worker yurthub.Worker
 	if validActiveMachine(input.ActiveMachine) {
-		worker = input.ActiveMachine
-		root = filepath.Join("/var/lib/machines", worker)
+		slot := input.ActiveMachine
+		worker = yurthub.Worker{
+			Scope: slot,
+			Root:  nspawn.Root(slot),
+			Exec: func(ctx context.Context, args ...string) (string, error) {
+				return nspawn.Exec(ctx, slog.Default(), slot, args...)
+			},
+			KubeletUnit: "kubelet.service",
+			Mode:        isolation.ModeNSpawn,
+		}
 	}
-	if err := hub.Reconcile(t.Context(), input.Enabled, worker, root, nil); err != nil {
+	if err := hub.Reconcile(t.Context(), input.Enabled, worker, nil); err != nil {
 		t.Fatal(err)
 	}
 }

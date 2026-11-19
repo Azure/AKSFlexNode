@@ -7,12 +7,23 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	corev1 "k8s.io/api/core/v1"
 	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 )
 
-// The journal shares the worker's lifetime and is never inherited by a repave.
+// The journal lives in the worker root; host-mode replacement explicitly removes it.
 const hubWorkerJournal = "var/lib/aks-flex-node/hub-transition.json"
+
+// Worker identifies the active worker and its execution environment. Scope is
+// the stable identifier stored in the transition journal.
+type Worker struct {
+	Scope       string
+	Root        isolation.NodeRoot
+	Exec        func(context.Context, ...string) (string, error)
+	KubeletUnit string
+	Mode        isolation.Mode
+}
 
 // Reconciler runs the active worker's transition engine on every Machine
 // read; RP changes DT intent without changing the Machine ETag. After a failure it
@@ -21,7 +32,7 @@ const hubWorkerJournal = "var/lib/aks-flex-node/hub-transition.json"
 // the serialized daemon queue calls it, so retry state needs no lock.
 type Reconciler struct {
 	log        *slog.Logger
-	operations func(machineDir string) (hubTransitionOperations, error)
+	operations func(worker Worker) (hubTransitionOperations, error)
 	now        func() time.Time
 
 	setCondition func(context.Context, corev1.NodeCondition) error
@@ -51,14 +62,14 @@ func NewReconciler(log *slog.Logger, nodeName, nodePool, serverURL string, nodes
 	}
 	return &Reconciler{
 		log: log,
-		operations: func(machineDir string) (hubTransitionOperations, error) {
+		operations: func(worker Worker) (hubTransitionOperations, error) {
 			return NewOperations(Config{
-				Log:        log,
-				MachineDir: machineDir,
-				NodeName:   nodeName,
-				NodePool:   nodePool,
-				ServerURL:  serverURL,
-				Nodes:      nodes,
+				Log:       log,
+				Worker:    worker,
+				NodeName:  nodeName,
+				NodePool:  nodePool,
+				ServerURL: serverURL,
+				Nodes:     nodes,
 			})
 		},
 		now:          time.Now,
@@ -67,10 +78,10 @@ func NewReconciler(log *slog.Logger, nodeName, nodePool, serverURL string, nodes
 	}
 }
 
-// Reconcile applies authoritative intent to the current worker. Machine is its
-// stable identifier and root its host rootfs path; both are empty without a
-// worker. Node is the live snapshot. Nil intent leaves existing state untouched.
-func (a *Reconciler) Reconcile(ctx context.Context, intent *bool, machine, root string, node *corev1.Node) error {
+// Reconcile applies authoritative intent to the current worker and live Node.
+// A zero Worker means no active worker; nil intent leaves state untouched.
+func (a *Reconciler) Reconcile(ctx context.Context, intent *bool, worker Worker, node *corev1.Node) error {
+	machine := worker.Scope
 	// Nil means this snapshot carried no authoritative value.
 	if intent == nil {
 		return nil
@@ -95,7 +106,7 @@ func (a *Reconciler) Reconcile(ctx context.Context, intent *bool, machine, root 
 		return err
 	}
 
-	err := a.reconcile(ctx, machine, root, intent)
+	err := a.reconcile(ctx, worker, intent)
 	result := hubCondition(*intent, err)
 	a.last = &result
 	a.reportCondition(ctx, currentHubCondition(node), result)
@@ -133,8 +144,11 @@ func (a *Reconciler) backoff(key string, fixed time.Duration, err error) {
 	a.retryAfter = a.now().Add(a.retryDelay)
 }
 
-func (a *Reconciler) reconcile(ctx context.Context, machine, root string, intent *bool) error {
-	store := fileHubTransitionStore{root: root, path: hubWorkerJournal}
+func (a *Reconciler) reconcile(ctx context.Context, worker Worker, intent *bool) error {
+	if worker.Root == nil {
+		return fmt.Errorf("hub reconcile requires a worker root")
+	}
+	store := fileHubTransitionStore{root: worker.Root.Path("/"), path: hubWorkerJournal}
 	// A worker that never started a transition has nothing to disable. Skip
 	// building operations, which validate settings only enabling needs.
 	if !*intent {
@@ -143,7 +157,7 @@ func (a *Reconciler) reconcile(ctx context.Context, machine, root string, intent
 		}
 	}
 
-	ops, err := a.operations(root)
+	ops, err := a.operations(worker)
 	if err != nil {
 		return fmt.Errorf("create hub operations: %w", err)
 	}
@@ -155,5 +169,5 @@ func (a *Reconciler) reconcile(ctx context.Context, machine, root string, intent
 	if err != nil {
 		return err
 	}
-	return transition.Reconcile(ctx, machine, intent)
+	return transition.Reconcile(ctx, worker.Scope, intent)
 }

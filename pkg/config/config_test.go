@@ -1069,7 +1069,7 @@ func TestBootstrapConfigValidatesAdditionalHostMounts(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			err := (&BootstrapConfig{AdditionalHostMounts: tt.mounts}).validate()
+			err := (&BootstrapConfig{Isolation: "nspawn", AdditionalHostMounts: tt.mounts}).validate()
 			if tt.wantErr == "" {
 				if err != nil {
 					t.Fatalf("BootstrapConfig.validate() error = %v", err)
@@ -1116,7 +1116,7 @@ func TestBootstrapConfigValidatesAdditionalRequiredServices(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			err := (&BootstrapConfig{AdditionalRequiredServices: tt.services}).validate()
+			err := (&BootstrapConfig{Isolation: "nspawn", AdditionalRequiredServices: tt.services}).validate()
 			if tt.wantErr && err == nil {
 				t.Fatal("validate() error = nil, want error")
 			}

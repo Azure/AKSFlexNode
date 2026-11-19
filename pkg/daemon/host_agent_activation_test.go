@@ -15,8 +15,8 @@ func TestDirectActivationIsRefusedInAContainer(t *testing.T) {
 	t.Setenv(agentdeployment.ContainerizedEnv, "true")
 	log := slog.New(slog.DiscardHandler)
 
-	if _, err := agentdeployment.PreflightHostAgentActivation(t.Context(), log, "/nonexistent/aks-flex-node"); !errors.Is(err, agentdeployment.ErrDirectActivationInContainer) {
-		t.Fatalf("agentdeployment.PreflightHostAgentActivation() error = %v, want %v", err, agentdeployment.ErrDirectActivationInContainer)
+	if _, err := PreflightHostAgentActivation(t.Context(), log, "/nonexistent/aks-flex-node"); !errors.Is(err, agentdeployment.ErrDirectActivationInContainer) {
+		t.Fatalf("PreflightHostAgentActivation() error = %v, want %v", err, agentdeployment.ErrDirectActivationInContainer)
 	}
 	if _, err := ActivateHostAgent(t.Context(), log, "/nonexistent/aks-flex-node"); !errors.Is(err, agentdeployment.ErrDirectActivationInContainer) {
 		t.Fatalf("ActivateHostAgent() error = %v, want %v", err, agentdeployment.ErrDirectActivationInContainer)

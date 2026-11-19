@@ -15,6 +15,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
 func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.T) {
@@ -41,7 +42,7 @@ func TestEnsureAgentUpgradeServiceAssetsMigratesExistingInstallation(t *testing.
 		t.Context(),
 		slog.Default(),
 		paths,
-		agentServiceOptions{},
+		ServiceTargetsFromConfig(&config.Config{}, config.DefaultIsolationMode),
 		systemdDir,
 		recoveryPath,
 		func(context.Context, *slog.Logger) error {
@@ -161,7 +162,7 @@ func TestEnsureDaemonServiceAssetsKeepsTheLastGoodAssetsWhileAnUpgradeIsPending(
 				}
 			}
 
-			held, err := ensureAgentUpgradeServiceAssetsAt(t.Context(), slog.Default(), paths, agentServiceOptions{},
+			held, err := ensureAgentUpgradeServiceAssetsAt(t.Context(), slog.Default(), paths, ServiceTargetsFromConfig(&config.Config{}, config.DefaultIsolationMode),
 				systemdDir, recoveryPath, func(context.Context, *slog.Logger) error { return nil }, true)
 			if err != nil {
 				t.Fatalf("ensureAgentUpgradeServiceAssetsAt: %v", err)
@@ -191,7 +192,7 @@ func TestNSpawnLifecycleUnits(t *testing.T) {
 
 	paths := testAgentUpgradePaths(t)
 	systemdDir := filepath.Join(t.TempDir(), "systemd")
-	assets, err := desiredAgentServiceAssets(paths, agentServiceOptions{}, systemdDir, filepath.Join(t.TempDir(), "recovery.sh"), paths.CurrentPath)
+	assets, err := desiredAgentServiceAssets(paths, ServiceTargetsFromConfig(&config.Config{}, config.DefaultIsolationMode), systemdDir, filepath.Join(t.TempDir(), "recovery.sh"), paths.CurrentPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -363,19 +364,56 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		serviceOptions agentServiceOptions
-		golden         string
+		cfg         config.Config
+		appliedMode isolation.Mode
+		golden      string
 	}{
-		"default": {golden: "aks-flex-node-agent.service.golden"},
-		"Arc": {
-			serviceOptions: agentServiceOptions{ARCEnabled: true},
-			golden:         "aks-flex-node-agent-arc.service.golden",
+		"nspawn without ARC": {
+			appliedMode: isolation.ModeNSpawn,
+			golden:      "aks-flex-node-agent.service.golden",
+		},
+		"nspawn with ARC": {
+			cfg: config.Config{
+				Azure: config.AzureConfig{
+					Arc: &config.ArcConfig{
+						Enabled: true,
+					},
+				},
+			},
+			appliedMode: isolation.ModeNSpawn,
+			golden:      "aks-flex-node-agent-arc.service.golden",
+		},
+		// Applied isolation can differ from the desired bootstrap configuration.
+		"none without ARC": {
+			cfg: config.Config{
+				Bootstrap: config.BootstrapConfig{
+					Isolation: isolation.ModeNSpawn,
+				},
+			},
+			appliedMode: isolation.ModeNone,
+			golden:      "aks-flex-node-agent-none.service.golden",
+		},
+		"none with ARC": {
+			cfg: config.Config{
+				Bootstrap: config.BootstrapConfig{
+					Isolation: isolation.ModeNSpawn,
+				},
+				Azure: config.AzureConfig{
+					Arc: &config.ArcConfig{
+						Enabled: true,
+					},
+				},
+			},
+			appliedMode: isolation.ModeNone,
+			golden:      "aks-flex-node-agent-none-arc.service.golden",
 		},
 	}
 	for name, tt := range tests {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			got, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
+
+			targets := ServiceTargetsFromConfig(&tt.cfg, tt.appliedMode)
+			got, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, targets)
 			if err != nil {
 				t.Fatalf("renderAgentServiceUnit() error = %v", err)
 			}
@@ -396,41 +434,40 @@ func TestRenderAgentServiceUnitGolden(t *testing.T) {
 	}
 }
 
-func TestInstalledAgentServiceOptions(t *testing.T) {
+func TestRenderAgentServiceUnitUsesOnlySuppliedTargets(t *testing.T) {
 	t.Parallel()
 
-	tests := map[string]struct {
-		writeUnit      bool
-		serviceOptions agentServiceOptions
-		want           agentServiceOptions
-	}{
-		"missing unit": {},
-		"default unit": {writeUnit: true},
-		"Arc unit": {
-			writeUnit:      true,
-			serviceOptions: agentServiceOptions{ARCEnabled: true},
-			want:           agentServiceOptions{ARCEnabled: true},
+	for name, targets := range map[string]ServiceTargets{
+		"empty": {},
+		"distinct": {
+			AfterTargets: []string{"custom.target", "ordered.service"},
+			WantsTargets: []string{"wanted.service", "another.target"},
 		},
-	}
-	for name, tt := range tests {
+		"after only": {
+			AfterTargets: []string{"after.target"},
+		},
+		"wants only": {
+			WantsTargets: []string{"wanted.target"},
+		},
+	} {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			systemdDir := t.TempDir()
-			if tt.writeUnit {
-				unit, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, tt.serviceOptions)
-				if err != nil {
-					t.Fatalf("renderAgentServiceUnit() error = %v", err)
-				}
-				if err := os.WriteFile(filepath.Join(systemdDir, ServiceUnitName), unit, 0o644); err != nil {
-					t.Fatal(err)
-				}
-			}
-			got, err := installedAgentServiceOptions(systemdDir)
+
+			unit, err := renderAgentServiceUnit("/agent/current", targets)
 			if err != nil {
-				t.Fatalf("installedAgentServiceOptions() error = %v", err)
+				t.Fatal(err)
 			}
-			if got != tt.want {
-				t.Fatalf("installedAgentServiceOptions() = %#v, want %#v", got, tt.want)
+			for key, want := range map[string][]string{
+				"After": targets.AfterTargets,
+				"Wants": targets.WantsTargets,
+			} {
+				line := key + "=" + strings.Join(want, " ")
+				if !slices.Contains(strings.Split(string(unit), "\n"), line) {
+					t.Errorf("unit does not contain exact line %q:\n%s", line, unit)
+				}
+				if got := unitDirectives(unit, "Unit", key); !slices.Equal(got, want) {
+					t.Errorf("%s = %q, want %q", key, got, want)
+				}
 			}
 		})
 	}
@@ -439,7 +476,7 @@ func TestInstalledAgentServiceOptions(t *testing.T) {
 func TestAgentServiceIncludesUpgradeRecovery(t *testing.T) {
 	t.Parallel()
 
-	serviceContent, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, agentServiceOptions{})
+	serviceContent, err := renderAgentServiceUnit(UpgradePathsUnder(hostroot.Path).BinaryPath, ServiceTargetsFromConfig(&config.Config{}, config.DefaultIsolationMode))
 	if err != nil {
 		t.Fatalf("renderAgentServiceUnit() error = %v", err)
 	}

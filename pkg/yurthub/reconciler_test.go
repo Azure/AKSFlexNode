@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/Azure/unbounded/pkg/agent/isolation"
+	"github.com/Azure/unbounded/pkg/agent/isolation/nspawn"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
@@ -29,7 +31,7 @@ func newTestHubReconciler(t *testing.T, ops *testHubOperations) (*Reconciler, st
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}
 	nodes := fake.NewClientset(node).CoreV1().Nodes()
 	adapter := NewReconciler(slog.Default(), "node1", "pool", "https://example.com", nodes, 0)
-	adapter.operations = func(string) (hubTransitionOperations, error) { return ops, nil }
+	adapter.operations = func(Worker) (hubTransitionOperations, error) { return ops, nil }
 	return adapter, machinesDir
 }
 
@@ -40,7 +42,8 @@ func TestNewReconcilerUsesNodeSettings(t *testing.T) {
 	log := slog.Default()
 	r := NewReconciler(log, "node1", "pool", "https://example.com", nodes, time.Minute)
 
-	ops, err := r.operations("/var/lib/machines/kube1")
+	worker := testWorker("kube1", "/var/lib/machines/kube1")
+	ops, err := r.operations(worker)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -49,15 +52,20 @@ func TestNewReconcilerUsesNodeSettings(t *testing.T) {
 		t.Fatalf("operations type = %T", ops)
 	}
 	want := Config{
-		Log:        log,
-		MachineDir: "/var/lib/machines/kube1",
-		NodeName:   "node1",
-		NodePool:   "pool",
-		ServerURL:  "https://example.com",
-		Nodes:      nodes,
+		Log:       log,
+		Worker:    worker,
+		NodeName:  "node1",
+		NodePool:  "pool",
+		ServerURL: "https://example.com",
+		Nodes:     nodes,
 	}
-	if production.cfg != want {
-		t.Fatalf("unexpected operation settings: %+v", production.cfg)
+	got := production.cfg
+	if got.Worker.Exec == nil {
+		t.Fatal("worker executor was not passed to operations")
+	}
+	got.Worker.Exec, want.Worker.Exec = nil, nil
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("unexpected operation settings: %+v", got)
 	}
 	if r.heartbeat != time.Minute {
 		t.Fatalf("heartbeat = %v", r.heartbeat)
@@ -98,13 +106,23 @@ func TestHubReconcilerFollowsIntent(t *testing.T) {
 	}
 }
 
+func testWorker(scope, dir string) Worker {
+	return Worker{
+		Scope:       scope,
+		Root:        nspawn.RootAt(scope, dir),
+		Exec:        func(context.Context, ...string) (string, error) { return "", nil },
+		KubeletUnit: "kubelet.service",
+		Mode:        isolation.ModeNSpawn,
+	}
+}
+
 func reconcileHub(t *testing.T, adapter *Reconciler, machinesDir string, intent *bool, machine string, node *corev1.Node) error {
 	t.Helper()
-	root := ""
+	var worker Worker
 	if machine != "" {
-		root = filepath.Join(machinesDir, machine)
+		worker = testWorker(machine, filepath.Join(machinesDir, machine))
 	}
-	return adapter.Reconcile(t.Context(), intent, machine, root, node)
+	return adapter.Reconcile(t.Context(), intent, worker, node)
 }
 
 func TestHubReconcilerRepavedWorkerStartsFresh(t *testing.T) {
@@ -240,7 +258,7 @@ func TestHubReconcilerFalseWithoutJournalSkipsOperations(t *testing.T) {
 				}
 			}
 			built := 0
-			adapter.operations = func(string) (hubTransitionOperations, error) {
+			adapter.operations = func(Worker) (hubTransitionOperations, error) {
 				built++
 				return nil, errors.New("invalid hub settings")
 			}

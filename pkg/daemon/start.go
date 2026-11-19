@@ -19,7 +19,7 @@ func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.
 	// In a container, the package manager on PATH is the image's, so it would install into the
 	// container rather than the host.
 	if !containerized {
-		tasks = append(tasks, host.InstallPackages(log))
+		tasks = append(tasks, host.InstallPackagesFor(log, cfg.Bootstrap.Isolation))
 	}
 	tasks = append(tasks, phases.Parallel(log,
 		host.ConfigureOS(log),

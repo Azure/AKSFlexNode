@@ -7,8 +7,11 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"syscall"
 	"testing"
+
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
 )
 
 func TestRemoveRuntimeDirsTask(t *testing.T) {
@@ -23,7 +26,7 @@ func TestRemoveRuntimeDirsTask(t *testing.T) {
 
 		root := t.TempDir()
 		paths := []string{
-			filepath.Join(root, "run"),
+			filepath.Join(root, "sdk"),
 			filepath.Join(root, "config"),
 			filepath.Join(root, "logs"),
 		}
@@ -31,16 +34,69 @@ func TestRemoveRuntimeDirsTask(t *testing.T) {
 			if err := os.MkdirAll(filepath.Join(path, "nested"), 0o700); err != nil {
 				t.Fatalf("create test directory %s: %v", path, err)
 			}
+			if err := os.WriteFile(filepath.Join(path, "nested", "data"), []byte("x"), 0o600); err != nil {
+				t.Fatalf("create test file in %s: %v", path, err)
+			}
 		}
 
 		task := &removeRuntimeDirsTask{logger: newLogger(), paths: paths}
-		if err := task.Do(context.Background()); err != nil {
-			t.Fatalf("Do() error = %v", err)
+		for run := 1; run <= 2; run++ {
+			if err := task.Do(context.Background()); err != nil {
+				t.Fatalf("Do() run %d error = %v", run, err)
+			}
 		}
 
 		for _, path := range paths {
 			if _, err := os.Stat(path); !os.IsNotExist(err) {
 				t.Fatalf("path %s still exists or stat failed with unexpected error: %v", path, err)
+			}
+		}
+	})
+
+	t.Run("SDK cleanup failure preserves Flex state", func(t *testing.T) {
+		t.Parallel()
+
+		root := t.TempDir()
+		sdkDir := filepath.Join(root, "sdk")
+		configDir := filepath.Join(root, "config")
+		logDir := filepath.Join(root, "logs")
+		if err := os.MkdirAll(configDir, 0o700); err != nil {
+			t.Fatal(err)
+		}
+
+		files := []string{
+			filepath.Join(configDir, "config.json"),
+			filepath.Join(configDir, "daemon-state.json"),
+			filepath.Join(configDir, "daemon-state.json.sha256"),
+		}
+		for _, path := range files {
+			if err := os.WriteFile(path, []byte("data"), 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+
+		removeErr := errors.New("SDK directory removal failed")
+		var removed []string
+		task := &removeRuntimeDirsTask{
+			logger: newLogger(),
+			paths:  []string{sdkDir, configDir, logDir},
+			removeAll: func(path string) error {
+				removed = append(removed, path)
+				if path == sdkDir {
+					return removeErr
+				}
+				return os.RemoveAll(path)
+			},
+		}
+		if err := task.Do(context.Background()); !errors.Is(err, removeErr) {
+			t.Fatalf("Do() error = %v, want SDK removal failure", err)
+		}
+		if !slices.Equal(removed, []string{sdkDir}) {
+			t.Fatalf("removal calls = %v, want only %s", removed, sdkDir)
+		}
+		for _, path := range files {
+			if data, err := os.ReadFile(path); err != nil || string(data) != "data" {
+				t.Fatalf("file %s = %q, error = %v; want retained data", path, data, err)
 			}
 		}
 	})
@@ -132,5 +188,14 @@ func TestRemoveRuntimeDirsTaskName(t *testing.T) {
 	task := RemoveRuntimeDirs(slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if got := task.Name(); got != "remove-runtime-dirs" {
 		t.Fatalf("Name() = %q, want remove-runtime-dirs", got)
+	}
+
+	cleanup, ok := task.(*removeRuntimeDirsTask)
+	if !ok {
+		t.Fatalf("task type = %T, want *removeRuntimeDirsTask", task)
+	}
+	want := []string{goalstates.AgentConfigDir, ConfigDir, DefaultLogDir}
+	if !slices.Equal(cleanup.paths, want) {
+		t.Fatalf("paths = %v, want %v", cleanup.paths, want)
 	}
 }

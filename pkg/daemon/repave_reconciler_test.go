@@ -14,6 +14,7 @@ import (
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
 	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/phases"
 )
@@ -148,15 +149,16 @@ func (f *fakeMachineClient) PatchStatus(_ context.Context, status aksmachine.Sta
 }
 
 type fakeWorkerRuntime struct {
-	state      *State
-	err        error
-	restartErr error
-	resetErr   error
-	stopErr    error
-	applied    bool
-	restarted  bool
-	reset      bool
-	stopped    bool
+	state        *State
+	err          error
+	restartErr   error
+	resetErr     error
+	stopErr      error
+	applied      bool
+	restarted    bool
+	reset        bool
+	stopped      bool
+	restartInput agentruntime.Inputs
 }
 
 func (f *fakeWorkerRuntime) Load(context.Context) (*State, error) {
@@ -173,7 +175,11 @@ func (f *fakeWorkerRuntime) Delete(context.Context) error {
 	return nil
 }
 
-func (f *fakeWorkerRuntime) Start(_ *config.Config, _ *slog.Logger, _ string, _ *goalstates.MachineGoalState, _ *goalstates.ContainerImageArchiveStaging) phases.Task {
+func (f *fakeWorkerRuntime) Worker(log *slog.Logger, node agentruntime.Node) (agentruntime.WorkerContext, error) {
+	return (agentruntime.NSpawn{}).Worker(log, node)
+}
+
+func (f *fakeWorkerRuntime) Start(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
 	return testTask{
 		name: "start",
 		run: func() error {
@@ -183,7 +189,8 @@ func (f *fakeWorkerRuntime) Start(_ *config.Config, _ *slog.Logger, _ string, _ 
 	}
 }
 
-func (f *fakeWorkerRuntime) Restart(_ *config.Config, _ *slog.Logger, _ string, _ *goalstates.MachineGoalState, _ *goalstates.ContainerImageArchiveStaging) phases.Task {
+func (f *fakeWorkerRuntime) Restart(_ *slog.Logger, input agentruntime.Inputs) phases.Task {
+	f.restartInput = input
 	return testTask{
 		name: "restart",
 		run: func() error {
@@ -193,24 +200,23 @@ func (f *fakeWorkerRuntime) Restart(_ *config.Config, _ *slog.Logger, _ string, 
 	}
 }
 
-func (f *fakeWorkerRuntime) Stop(_ *slog.Logger, _ string) phases.Task {
-	return testTask{name: "stop-worker"}
+func (f *fakeWorkerRuntime) Prepare(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
+	return testTask{name: "prepare-upgrade"}
 }
 
-func (f *fakeWorkerRuntime) CleanupNetwork(_ *slog.Logger) phases.Task {
-	return testTask{name: "cleanup-network"}
-}
-
-func (f *fakeWorkerRuntime) Retire(_ *slog.Logger, _ string) phases.Task {
+func (f *fakeWorkerRuntime) Retire(_ *slog.Logger, _ agentruntime.Inputs) phases.Task {
 	return testTask{name: "retire"}
 }
 
-func (f *fakeWorkerRuntime) Reset(_ *slog.Logger) phases.Task {
-	return testTask{
-		name: "reset",
-		run: func() error {
-			f.reset = true
-			return f.resetErr
+func (f *fakeWorkerRuntime) PlanReset(_ *slog.Logger) agentruntime.ResetPlan {
+	return testResetPlan{
+		stop: testTask{name: "stop-reset-workers"},
+		finish: testTask{
+			name: "reset",
+			run: func() error {
+				f.reset = true
+				return f.resetErr
+			},
 		},
 	}
 }

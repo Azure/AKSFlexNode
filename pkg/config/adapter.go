@@ -12,6 +12,7 @@ import (
 	agentconfig "github.com/Azure/unbounded/pkg/agent/config"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
 	"github.com/Azure/unbounded/pkg/agent/hostroot"
+	"github.com/Azure/unbounded/pkg/agent/isolation"
 	clientcmdapi "k8s.io/client-go/tools/clientcmd/api"
 )
 
@@ -54,6 +55,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 	kubeletConfig := kubeletConfiguration(cfg)
 
 	ac := &agentconfig.AgentConfig{
+		Isolation:             string(cfg.Bootstrap.Isolation),
 		MachineName:           machineName,
 		NodeName:              cfg.Agent.NodeName,
 		OCIImage:              cfg.Bootstrap.OCIImage,
@@ -115,6 +117,11 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 
 	ac.NSpawnLifecycle = nspawnLifecycleHooks()
 
+	credentialCommand := flexNodeBinaryPath
+	if cfg.Bootstrap.Isolation == isolation.ModeNone {
+		credentialCommand = filepath.Join(hostroot.Path, hostBinaryRelativePath)
+	}
+
 	if cfg.UsesKubeconfigCredentials() {
 		ac.Kubelet.KubeconfigData = []byte(cfg.Node.Kubelet.KubeconfigData)
 		return ac
@@ -132,13 +139,13 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		}
 		if cfg.Azure.ServicePrincipal.clientCertificateData() != "" {
 			ac.Kubelet.Auth.ExecCredential = buildExecCredential(
-				env,
+				credentialCommand, env,
 				"--client-certificate-file",
 				cfg.Azure.ServicePrincipal.ClientSecretFile,
 			)
 		} else {
 			env["AAD_SERVICE_PRINCIPAL_CLIENT_SECRET"] = cfg.Azure.ServicePrincipal.ClientSecret
-			ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
+			ac.Kubelet.Auth.ExecCredential = buildExecCredential(credentialCommand, env)
 		}
 
 	case cfg.IsMIConfigured():
@@ -148,7 +155,7 @@ func ToAgentConfig(cfg *Config, machineName string) *agentconfig.AgentConfig {
 		if cfg.Azure.ManagedIdentity != nil && cfg.Azure.ManagedIdentity.ClientID != "" {
 			env["AZURE_CLIENT_ID"] = cfg.Azure.ManagedIdentity.ClientID
 		}
-		ac.Kubelet.Auth.ExecCredential = buildExecCredential(env)
+		ac.Kubelet.Auth.ExecCredential = buildExecCredential(credentialCommand, env)
 	}
 
 	return ac
@@ -272,7 +279,7 @@ func IsHostBinaryPath(path string) bool {
 // buildExecCredential creates an ExecConfig that invokes the aks-flex-node
 // binary as a credential plugin. The binary's `token kubelogin` subcommand
 // uses kubelogin to obtain an Azure AD token for the AKS API server.
-func buildExecCredential(env map[string]string, args ...string) *clientcmdapi.ExecConfig {
+func buildExecCredential(command string, env map[string]string, args ...string) *clientcmdapi.ExecConfig {
 	execEnv := make([]clientcmdapi.ExecEnvVar, 0, len(env))
 	for k, v := range env {
 		execEnv = append(execEnv, clientcmdapi.ExecEnvVar{Name: k, Value: v})
@@ -281,7 +288,7 @@ func buildExecCredential(env map[string]string, args ...string) *clientcmdapi.Ex
 
 	return &clientcmdapi.ExecConfig{
 		APIVersion:         "client.authentication.k8s.io/v1",
-		Command:            flexNodeBinaryPath,
+		Command:            command,
 		Args:               execArgs,
 		Env:                execEnv,
 		InteractiveMode:    clientcmdapi.NeverExecInteractiveMode,

@@ -27,19 +27,6 @@ const (
 var ErrDirectActivationInContainer = errors.New("direct activation is not available in the agent's container; " +
 	"upgrade it with an AgentUpgrade that names an image")
 
-// PreflightHostAgentActivation plans a direct activation without changing host state.
-func PreflightHostAgentActivation(ctx context.Context, log *slog.Logger, candidatePath string) (agentbinary.ActivationPlan, error) {
-	if Containerized() {
-		return agentbinary.ActivationPlan{}, ErrDirectActivationInContainer
-	}
-	root := PlannedHostRoot()
-	service, paths, err := NewHostActivationService(log, root, PlannedHostRoot)
-	if err != nil {
-		return agentbinary.ActivationPlan{}, err
-	}
-	return agentbinary.PreflightHostDaemonActivation(ctx, HostAgentActivationOptions(paths, candidatePath), service)
-}
-
 func HostAgentActivationOptions(paths UpgradePaths, candidatePath string) agentbinary.ActivationOptions {
 	return agentbinary.ActivationOptions{
 		Layout:        paths.Layout(),
@@ -61,17 +48,13 @@ type HostActivationService struct {
 	paths            UpgradePaths
 	systemdDir       string
 	recoveryScript   string
-	serviceOptions   agentServiceOptions
+	targets          ServiceTargets
 	inspectService   func(context.Context, *slog.Logger, string) (bool, error)
 	serviceWasActive bool
 }
 
-func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() string) (*HostActivationService, UpgradePaths, error) {
+func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() string) (*HostActivationService, UpgradePaths) {
 	paths := UpgradePathsUnder(root)
-	serviceOptions, err := installedAgentServiceOptions(SystemdSystemDir)
-	if err != nil {
-		return nil, UpgradePaths{}, err
-	}
 	return &HostActivationService{
 		log:            log,
 		root:           root,
@@ -80,9 +63,8 @@ func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() 
 		paths:          paths,
 		systemdDir:     SystemdSystemDir,
 		recoveryScript: RecoveryScriptPathUnder(root),
-		serviceOptions: serviceOptions,
 		inspectService: inspectAgentServiceActive,
-	}, paths, nil
+	}, paths
 }
 
 // Preflight checks the service before an activation switches anything. In an
@@ -100,7 +82,7 @@ func NewHostActivationService(log *slog.Logger, root string, resolveRoot func() 
 // A move whose first pass renamed its copy into place just before the layout
 // was built leaves the root unchanged, but has not finished, so it is checked
 // here too, as guardLegacySeed checks it before the lock is held.
-func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath string) (agentbinary.ServicePlan, error) {
+func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath string, targets ServiceTargets) (agentbinary.ServicePlan, error) {
 	if s.resolveRoot != nil {
 		if current := s.resolveRoot(); current != s.root {
 			return agentbinary.ServicePlan{}, fmt.Errorf("the agent's host root moved from %s to %s while the activation was prepared; retry", s.root, current)
@@ -128,7 +110,9 @@ func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath
 	} else if !errors.Is(err, os.ErrNotExist) {
 		return agentbinary.ServicePlan{}, fmt.Errorf("inspect AgentUpgrade MachineOperation signal: %w", err)
 	}
-	assets, err := desiredAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath)
+	s.targets = targets
+
+	assets, err := desiredAgentServiceAssets(s.paths, s.targets, s.systemdDir, s.recoveryScript, currentBinaryPath)
 	if err != nil {
 		return agentbinary.ServicePlan{}, err
 	}
@@ -148,15 +132,7 @@ func (s *HostActivationService) Preflight(ctx context.Context, currentBinaryPath
 }
 
 func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service string) (bool, error) {
-	loadState, err := utilexec.OutputCmdAt(ctx, log, slog.LevelDebug, "systemctl", "show", "--property=LoadState", "--value", service)
-	if err != nil {
-		return false, err
-	}
-	if strings.TrimSpace(loadState) == "not-found" {
-		// Reset removes the unit while intentionally retaining the managed binary
-		// layout for a later rejoin.
-		return false, nil
-	}
+	// A removed unit file does not prove its already-loaded service has stopped.
 	state, err := utilexec.OutputCmdAt(ctx, log, slog.LevelDebug, "systemctl", "show", "--property=ActiveState", "--value", service)
 	if err != nil {
 		return false, err
@@ -172,7 +148,7 @@ func inspectAgentServiceActive(ctx context.Context, log *slog.Logger, service st
 }
 
 func (s *HostActivationService) Prepare(_ context.Context, currentBinaryPath string) error {
-	return writeAgentServiceAssets(s.paths, s.serviceOptions, s.systemdDir, s.recoveryScript, currentBinaryPath, false)
+	return writeAgentServiceAssets(s.paths, s.targets, s.systemdDir, s.recoveryScript, currentBinaryPath, false)
 }
 
 func (s *HostActivationService) Reload(ctx context.Context) error {

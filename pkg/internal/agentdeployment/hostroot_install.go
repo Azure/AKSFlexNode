@@ -342,14 +342,12 @@ func adoptableByEarlierRelease(path string) bool {
 	return err == nil && info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0
 }
 
-func SynchronizeNspawnAgentBinary(sourcePath, machine string) error {
-	if !validNspawnMachine(machine) {
-		return fmt.Errorf("invalid nspawn machine %q", machine)
-	}
-	destination := filepath.Join("/var/lib/machines", machine, "usr", "local", "bin", "aks-flex-node")
+// SynchronizeAgentBinary installs the credential helper at a runtime-resolved destination.
+func SynchronizeAgentBinary(sourcePath, destination string) error {
 	if err := copyExecutable(sourcePath, destination); err != nil {
-		return fmt.Errorf("copy agent binary to %s: %w", machine, err)
+		return fmt.Errorf("copy agent binary to %s: %w", destination, err)
 	}
+
 	return nil
 }
 
