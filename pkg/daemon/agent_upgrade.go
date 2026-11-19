@@ -55,21 +55,6 @@ func (u *agentUpgradeCoordinator) RecordPending(ctx context.Context, operationNa
 
 func (u *agentUpgradeCoordinator) DaemonInstance() string { return u.instanceID }
 
-func (u *agentUpgradeCoordinator) RetryRecovery(ctx context.Context) (bool, error) {
-	signal, err := u.SignalStore().Read()
-	if err != nil || signal == nil || !signal.RecoveryRequired {
-		return false, err
-	}
-
-	cleanupCtx, cancel := agentdeployment.UpgradeCleanupContext(ctx)
-	defer cancel()
-	if err := u.Restart(cleanupCtx); err != nil {
-		return false, fmt.Errorf("retry AgentUpgrade recovery restart: %w", err)
-	}
-
-	return true, nil
-}
-
 type agentUpgradeExecutor interface {
 	Acquire() (io.Closer, error)
 	Validate(agentdeployment.UpgradeRequest) error

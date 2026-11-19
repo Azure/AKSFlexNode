@@ -79,8 +79,7 @@ The default `all` command runs:
 11. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
 12. Reinstall the bootstrap-token node with an earlier release, and validate its upgrade and move into `/opt/unbounded/agent`; see [Host Root Migration Validation](#host-root-migration-validation).
 13. Run controller-machine-driven repave validation after the agent upgrade.
-14. Exercise the token VM's native none and OCI workers, including `NodeReboot`, host reboot, `HostSoftReboot`, repave, reset, and rejoin.
-15. Collect logs and clean up Azure resources.
+14. Collect logs and clean up Azure resources.
 
 ## Commands
 
@@ -106,7 +105,6 @@ The default `all` command runs:
 | `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
-| `isolation` | Exercise native none and OCI worker lifecycle, workloads, reset, and rejoin on the token VM. |
 | `nspawn-lifecycle` | Validate lifecycle helper installation and generated hooks on all nodes, then regenerate config and restart the token node through lifecycle reconciliation. |
 | `agent-upgrade` | Validate managed agent upgrade, forced rollback, retry, direct host activation, and nspawn synchronization. |
 | `host-root-migration` | Reinstall the token node with an earlier release, upgrade it, and validate the link to `/usr/local`, that a noexec `/opt` keeps it linked, the move into `/opt/unbounded/agent`, that the nspawn machine restarts after the move, and that an AgentUpgrade back to the earlier release cannot install it under `/usr/local`. |
@@ -214,7 +212,7 @@ Each join path uploads the locally built binary and renders a config file. Fresh
 
 ## Host reboot validation
 
-The full run submits a `HostSoftReboot` MachineOperation on each nspawn join path and on the token VM's native none and OCI workers. It waits for a new host boot and agent invocation before waiting for completion, checks the recorded target boot ID and success condition, and verifies the worker, Node UID, credentials, applied state, and kubelet configuration survive. A smoke workload checks recovery. The existing worker `NodeReboot` same-host-boot and direct host reboot checks remain in the isolation flow.
+The full run submits a `HostSoftReboot` MachineOperation on each nspawn join path and on the separate isolation lane's none and OCI workers. It waits for a new host boot and agent invocation before waiting for completion, checks the recorded target boot ID and success condition, and verifies the worker, Node UID, credentials, applied state, and kubelet configuration survive. A smoke workload checks recovery. The existing worker `NodeReboot` same-host-boot and direct host reboot checks remain in the isolation flow.
 
 ## Agent Upgrade Validation
 

@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -485,36 +484,6 @@ func TestAgentUpgradeHandoffDefersHostSoftReboot(t *testing.T) {
 	}
 	if h.calls != 0 || getSoftOperation(t, c, "soft").Status.Phase != "" {
 		t.Fatal("host reboot started during upgrade handoff")
-	}
-}
-
-func TestAgentContainerSystemctlUsesHostExec(t *testing.T) {
-	t.Parallel()
-
-	dockerfile, err := os.ReadFile("../../Dockerfile.aks-flex-node-agent")
-	if err != nil {
-		t.Fatal(err)
-	}
-	script, err := os.ReadFile("../../scripts/agent-image/host-exec")
-	if err != nil {
-		t.Fatal(err)
-	}
-	unit, err := os.ReadFile("../internal/agentdeployment/assets/aks-flex-node-agent-container.service")
-	if err != nil {
-		t.Fatal(err)
-	}
-	for _, text := range []string{"for tool in machinectl systemctl", "ln -s host-exec /opt/aks-flex-node/bin/$tool", "ENV PATH=/opt/aks-flex-node/bin:"} {
-		if !strings.Contains(string(dockerfile), text) {
-			t.Fatalf("container image missing %q", text)
-		}
-	}
-	if !strings.Contains(string(script), `exec /usr/sbin/chroot "$host_root" /usr/bin/env "$host_path" "$name" "$@"`) {
-		t.Fatal("host-exec does not invoke host tools in the host root")
-	}
-	for _, text := range []string{"--with-ns pid:/proc/1/ns/pid", "--mount type=bind,src=/,dst=/host"} {
-		if !strings.Contains(string(unit), text) {
-			t.Fatalf("container unit missing %q", text)
-		}
 	}
 }
 

@@ -12,6 +12,70 @@ import (
 	"github.com/Azure/unbounded/pkg/agent/isolation"
 )
 
+func TestRetryAgentUpgradeRecoveryReportsScheduledRestart(t *testing.T) {
+	t.Parallel()
+
+	tests := map[string]struct {
+		signal     *UpgradeSignal
+		restartErr error
+		want       bool
+		wantErr    bool
+		calls      int
+	}{
+		"no signal": {},
+		"ordinary pending upgrade": {
+			signal: &UpgradeSignal{
+				OperationName: "upgrade",
+			},
+		},
+		"recovery scheduled": {
+			signal: &UpgradeSignal{
+				OperationName:    "upgrade",
+				RecoveryRequired: true,
+			},
+			want:  true,
+			calls: 1,
+		},
+		"restart failed": {
+			signal: &UpgradeSignal{
+				OperationName:    "upgrade",
+				RecoveryRequired: true,
+			},
+			restartErr: errors.New("restart failed"),
+			wantErr:    true,
+			calls:      1,
+		},
+	}
+	for name, tc := range tests {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			signals := NewUpgradeSignalStore(filepath.Join(t.TempDir(), "signal.json"))
+			if tc.signal != nil {
+				if err := signals.Write(*tc.signal); err != nil {
+					t.Fatal(err)
+				}
+			}
+			restarts := 0
+			restart := func(context.Context) error {
+				restarts++
+				return tc.restartErr
+			}
+
+			got, err := retryAgentUpgradeRecovery(t.Context(), signals, restart)
+			if got != tc.want {
+				t.Fatalf("scheduled = %v, want %v", got, tc.want)
+			}
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("error = %v, want error %v", err, tc.wantErr)
+			}
+			if restarts != tc.calls {
+				t.Fatalf("restarts = %d, want %d", restarts, tc.calls)
+			}
+		})
+	}
+}
+
 // TestHostAgentUpgradeExecutorStageGuardsTheLegacySeedFirst: a host that would
 // hand a release before the host root a binary under /usr/local is refused
 // before anything is staged, so the operation fails with nothing to roll back.
