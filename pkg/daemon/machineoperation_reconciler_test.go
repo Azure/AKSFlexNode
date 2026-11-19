@@ -68,7 +68,7 @@ func TestHasMachineOperationAPI(t *testing.T) {
 func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 	t.Parallel()
 
-	reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
+	reconciler, softReboot, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client: fake.NewClientBuilder().WithRESTMapper(
 			errorRESTMapper{err: errors.New("boom")},
 		).Build(),
@@ -83,7 +83,7 @@ func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 	if reconciler == nil {
 		t.Fatal("machineOperationReconciler returned nil")
 	}
-	if _, enabled := reconciler.(*flexMachineOperationReconciler); enabled {
+	if softReboot != nil {
 		t.Fatal("disabled MachineOperations enabled host reboot publication")
 	}
 }
@@ -91,7 +91,7 @@ func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 func TestMachineOperationReconcilerAbsentAPISkipsHostReboots(t *testing.T) {
 	t.Parallel()
 
-	reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
+	_, softReboot, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client:       fake.NewClientBuilder().WithRESTMapper(meta.NewDefaultRESTMapper(nil)).Build(),
 		Log:          discardLogger(),
 		Runtime:      &fakeWorkerRuntime{},
@@ -100,8 +100,8 @@ func TestMachineOperationReconcilerAbsentAPISkipsHostReboots(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, enabled := reconciler.(*flexMachineOperationReconciler); enabled {
-		t.Fatal("MachineOperation API absence enabled the host reboot reconciler")
+	if softReboot != nil {
+		t.Fatal("MachineOperation API absence enabled host reboot publication")
 	}
 }
 
@@ -141,7 +141,7 @@ func TestMachineOperationReconcilerRequiresDependencies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := machineOperationReconciler(tt.opts, &fakeHostRebooter{})
+			_, _, err := machineOperationReconciler(tt.opts, &fakeHostRebooter{})
 			if err == nil {
 				t.Fatal("machineOperationReconciler error = nil, want error")
 			}
@@ -174,7 +174,7 @@ func TestMachineOperationReconcilerEnabledRequiresNames(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := machineOperationReconciler(machineOperationReconcilerOptions{
+			_, _, err := machineOperationReconciler(machineOperationReconcilerOptions{
 				Client: fake.NewClientBuilder().WithRESTMapper(
 					machineOperationRESTMapper(),
 				).Build(),
@@ -879,7 +879,7 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 					ActiveMachine: "kube1",
 				},
 			}
-			reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
+			reconciler, _, err := machineOperationReconciler(machineOperationReconcilerOptions{
 				Client:         cache,
 				Reader:         apiServer,
 				Log:            discardLogger(),

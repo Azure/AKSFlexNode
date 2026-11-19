@@ -16,11 +16,10 @@ import (
 // Flex has a Node but no Machina Machine CR. Queue selectors without consulting
 // the cache; dispatch checks the current Node labels through the API reader.
 type flexMachineOperationReconciler struct {
-	delegate   agentdaemon.MachineOperationRequestReconciler
-	handlers   agentdaemon.MachineOperationHandlers
-	reader     client.Reader
-	target     flexHostSoftRebootTarget
-	softReboot *agentdaemon.HostSoftRebootHandler
+	delegate agentdaemon.MachineOperationRequestReconciler
+	handlers agentdaemon.MachineOperationHandlers
+	reader   client.Reader
+	target   flexHostSoftRebootTarget
 }
 
 func (r *flexMachineOperationReconciler) SetupController(b *builder.TypedBuilder[agentdaemon.Request]) *builder.TypedBuilder[agentdaemon.Request] {

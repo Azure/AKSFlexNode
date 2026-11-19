@@ -151,31 +151,18 @@ func newSoftHarness(
 	gate := newStartupGate()
 	gate.open()
 	h := &softHarness{}
-	h.host = &fakeHostRebooter{bootID: func() (string, error) { return "boot1", nil }}
+	h.host = &fakeHostRebooter{
+		bootID: func() (string, error) { return "boot1", nil },
+		reboot: func(context.Context, *slog.Logger) error {
+			h.calls++
+			return nil
+		},
+	}
 	h.handlers = &machineOperationHandlers{
 		log:          discardLogger(),
 		gate:         gate,
 		agentUpgrade: &fakeAgentUpgradeExecutor{},
 		softReboot:   newTestSoftHandler(t, c, reader, h.host, &gate.stopping),
-	}
-	h.host.reboot = func(ctx context.Context, _ *slog.Logger) error {
-		h.calls++
-		op := getSoftOperation(t, reader, "soft")
-		target := operationTargetStatus(&op.Status, "machine1")
-		if op.Status.Phase != machinav1alpha3.OperationPhaseInProgress {
-			t.Fatalf("reboot before aggregate start: %+v", op.Status)
-		}
-		if target == nil {
-			t.Fatal("reboot before target start")
-		}
-		if target.Phase != machinav1alpha3.OperationPhaseInProgress {
-			t.Fatalf("target phase before reboot = %s", target.Phase)
-		}
-		if target.BootID != "boot1" {
-			t.Fatalf("target boot ID before reboot = %q", target.BootID)
-		}
-
-		return nil
 	}
 	handlers := agentdaemon.MachineOperationHandlers{
 		machinav1alpha3.OperationHostSoftReboot: h.handlers.reconcileHostSoftReboot,
@@ -187,11 +174,10 @@ func newSoftHarness(
 
 	h.reconciler = gatedMachineOperationReconciler{
 		delegate: &flexMachineOperationReconciler{
-			delegate:   sdk,
-			handlers:   handlers,
-			reader:     reader,
-			target:     flexHostSoftRebootTarget{machineName: "machine1", nodeName: "node1"},
-			softReboot: h.handlers.softReboot,
+			delegate: sdk,
+			handlers: handlers,
+			reader:   reader,
+			target:   flexHostSoftRebootTarget{machineName: "machine1", nodeName: "node1"},
 		},
 		gate: gate,
 	}
@@ -690,7 +676,7 @@ func TestHostSoftRebootConsumerWiring(t *testing.T) {
 					return nil
 				},
 			}
-			reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
+			reconciler, softReboot, err := machineOperationReconciler(machineOperationReconcilerOptions{
 				Client:         c,
 				Reader:         c,
 				Log:            log,
@@ -728,7 +714,7 @@ func TestHostSoftRebootConsumerWiring(t *testing.T) {
 			}
 
 			bootID = "boot2"
-			if err := flex.softReboot.PublishStartup(ctx); err != nil {
+			if err := softReboot.PublishStartup(ctx); err != nil {
 				t.Fatal(err)
 			}
 

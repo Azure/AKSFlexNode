@@ -140,7 +140,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return err
 	}
 	gate := newStartupGate()
-	machineOperations, err := machineOperationReconciler(machineOperationReconcilerOptions{
+	machineOperations, softReboot, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client:               mgr.GetClient(),
 		Reader:               mgr.GetAPIReader(),
 		Log:                  log,
@@ -189,8 +189,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			ctx,
 			log,
 			func(ctx context.Context) error {
-				if flex, enabled := machineOperations.(*flexMachineOperationReconciler); enabled {
-					if err := flex.softReboot.PublishStartup(ctx); err != nil {
+				if softReboot != nil {
+					if err := softReboot.PublishStartup(ctx); err != nil {
 						return fmt.Errorf("publish HostSoftReboot startup results: %w", err)
 					}
 				}
