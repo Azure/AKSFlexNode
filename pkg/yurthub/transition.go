@@ -1,13 +1,9 @@
-package daemon
+package yurthub
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
-
-	"github.com/Azure/AKSFlexNode/pkg/utils/utilio"
 )
 
 // errHubConverge marks a failure while updating an already-enabled Hub; kubelet
@@ -26,9 +22,8 @@ const (
 )
 
 // hubTransitionState is a local write-ahead journal. Applied is the last completed
-// intent, not proof of the current routing while Phase is nonempty. Scope binds
-// the journal to a cluster/node/worker generation; its encoding is adapter-owned.
-// A replacement worker must not silently inherit another generation's progress.
+// intent, not proof of the current routing while Phase is nonempty. Scope is the
+// caller's worker identifier; the journal lives inside that worker's rootfs.
 type hubTransitionState struct {
 	Version  int      `json:"version"`
 	Scope    string   `json:"scope"`
@@ -42,9 +37,8 @@ type hubTransitionStore interface {
 	Save(context.Context, *hubTransitionState) error
 }
 
-// hubTransitionOperations are the per-worker steps (pkg/yurthub.Operations in
-// production). Each must be idempotent: a step can succeed before its checkpoint
-// is saved, so it may run again after a crash.
+// hubTransitionOperations are the per-worker steps. Each must be idempotent:
+// a step can succeed before its checkpoint is saved and run again after a crash.
 type hubTransitionOperations interface {
 	// Prepare installs and starts Hub without redirecting kubelet.
 	Prepare(context.Context) error
@@ -83,7 +77,7 @@ func newHubTransition(store hubTransitionStore, ops hubTransitionOperations) (*h
 
 // Reconcile runs inside the existing serialized daemon queue. A nil intent means
 // no authoritative update: retain state without enabling, disabling or resuming
-// an interrupted transition. After reconnect the adapter must fetch current intent
+// an interrupted transition. After reconnect the caller must fetch current intent
 // before retrying. Local offline service recovery belongs to worker systemd.
 func (r *hubTransition) Reconcile(ctx context.Context, scope string, intent *bool) error {
 	if err := ctx.Err(); err != nil {
@@ -223,72 +217,4 @@ func (s *hubTransitionState) validate() error {
 		return fmt.Errorf("unknown hub transition phase %q", s.Phase)
 	}
 	return nil
-}
-
-// fileHubTransitionStore keeps the journal at path inside the worker rootfs root, so
-// repave and reset delete it with the Hub state it describes. Access stays beneath
-// root even through symlinks. It is separate from daemon-state.json so DT progress
-// never touches the applied Machine settings version.
-type fileHubTransitionStore struct {
-	root string
-	path string
-}
-
-func (s fileHubTransitionStore) Load(ctx context.Context) (*hubTransitionState, error) {
-	if err := ctx.Err(); err != nil {
-		return nil, err
-	}
-	data, err := s.read()
-	if errors.Is(err, os.ErrNotExist) {
-		return nil, nil
-	}
-	if err != nil {
-		return nil, fmt.Errorf("read hub transition journal: %w", err)
-	}
-	var state hubTransitionState
-	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, fmt.Errorf("decode hub transition journal: %w", err)
-	}
-	if err := state.validate(); err != nil {
-		return nil, err
-	}
-	return &state, nil
-}
-
-func (s fileHubTransitionStore) Save(ctx context.Context, state *hubTransitionState) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	if state == nil {
-		return fmt.Errorf("hub transition state is nil")
-	}
-	if err := state.validate(); err != nil {
-		return err
-	}
-	data, err := json.Marshal(state)
-	if err != nil {
-		return fmt.Errorf("encode hub transition journal: %w", err)
-	}
-	if err := s.write(append(data, '\n')); err != nil {
-		return fmt.Errorf("write hub transition journal: %w", err)
-	}
-	return nil
-}
-
-func (s fileHubTransitionStore) read() ([]byte, error) {
-	root, err := os.OpenRoot(s.root)
-	if err != nil {
-		return nil, err
-	}
-	defer root.Close() //nolint:errcheck // directory handle
-	return root.ReadFile(s.path)
-}
-
-func (s fileHubTransitionStore) write(data []byte) error {
-	root, err := os.OpenRoot(s.root)
-	if err != nil {
-		return err
-	}
-	defer root.Close() //nolint:errcheck // directory handle
-	return utilio.WriteFileInRoot(root, s.path, data, 0o600)
 }

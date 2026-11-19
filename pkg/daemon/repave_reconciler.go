@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log/slog"
 	"math/big"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -204,19 +205,24 @@ func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
 // reconcileHub applies DT intent in place while the Node exists, including while
 // a newer Machine goal waits for its repave signal. Failures are logged, not
 // returned, so they don't switch the Machine poll to fast error backoff; the
-// adapter paces its own retries and the journal keeps progress.
+// reconciler paces its own retries and the journal keeps progress.
 func (r *repaveReconciler) reconcileHub(ctx context.Context, machineSnap machineSnapshot, nodeSnap nodeSnapshot, state *State) {
 	if r.hub == nil || nodeSnap.node == nil || machineSnap.machine == nil {
 		return
 	}
-	if err := r.hub.ReconcileHub(ctx, machineSnap.machine.Goal, state, nodeSnap.node); err != nil {
+	worker, root := "", ""
+	if state != nil && validActiveMachine(state.ActiveMachine) {
+		worker = state.ActiveMachine
+		root = filepath.Join("/var/lib/machines", worker)
+	}
+	if err := r.hub.Reconcile(ctx, machineSnap.machine.Goal.DisconnectToleranceEnabled, worker, root, nodeSnap.node); err != nil {
 		r.log.Error("hub reconcile failed; will retry on a later read", "error", err)
 	}
 }
 
-// hubMachineReconciler maps Machine reads to local Hub state. It runs on the same serialized queue as repave and MachineOperations.
+// hubMachineReconciler runs on the same serialized queue as repave and MachineOperations.
 type hubMachineReconciler interface {
-	ReconcileHub(context.Context, aksmachine.GoalState, *State, *corev1.Node) error
+	Reconcile(context.Context, *bool, string, string, *corev1.Node) error
 }
 
 func (r *repaveReconciler) machineSnapshot(ctx context.Context) (machineSnapshot, error) {
