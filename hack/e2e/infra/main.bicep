@@ -47,6 +47,7 @@ param tags object = {}
 var clusterName   = 'aks-e2e-${nameSuffix}'
 var msiVmName     = 'vm-e2e-msi-${nameSuffix}'
 var tokenVmName   = 'vm-e2e-token-${nameSuffix}'
+var isolationVmName = 'vm-e2e-isolation-${nameSuffix}'
 var offlineVmName = 'vm-e2e-offline-${nameSuffix}'
 var kubeadmVmName = 'vm-e2e-kubeadm-${nameSuffix}'
 var arcVmName     = 'vm-e2e-arc-${nameSuffix}'
@@ -196,6 +197,21 @@ module vmToken 'modules/vm.bicep' = {
   }
 }
 
+module vmIsolation 'modules/vm.bicep' = {
+  name: 'deploy-vm-isolation'
+  params: {
+    location: location
+    vmName: isolationVmName
+    computerName: toUpper(isolationVmName)
+    vmSize: vmSize
+    adminUsername: adminUsername
+    sshPublicKey: sshPublicKey
+    subnetId: vnet.properties.subnets[1].id
+    assignManagedIdentity: false
+    tags: tags
+  }
+}
+
 module vmOffline 'modules/vm.bicep' = {
   name: 'deploy-vm-offline'
   params: {
@@ -272,6 +288,10 @@ output msiVmPrincipalId string = vmMsi.outputs.principalId
 output tokenVmName string = vmToken.outputs.vmName
 output tokenVmIp string = vmToken.outputs.publicIpAddress
 output tokenVmPrivateIp string = vmToken.outputs.privateIpAddress
+
+output isolationVmName string = vmIsolation.outputs.vmName
+output isolationVmIp string = vmIsolation.outputs.publicIpAddress
+output isolationVmPrivateIp string = vmIsolation.outputs.privateIpAddress
 
 output offlineVmName string = vmOffline.outputs.vmName
 output offlineVmIp string = vmOffline.outputs.publicIpAddress

@@ -102,6 +102,7 @@ jobs:
       - name: Run E2E tests, including ARM Machine registration
         env:
           E2E_SKIP_CLEANUP: "1"  # Cleanup handled in dedicated step below
+          E2E_SKIP_LOG_COLLECTION: "1"  # Collected once by the always() step
         run: |
           set -euo pipefail
           ./hack/e2e/run.sh all
@@ -122,6 +123,7 @@ jobs:
         if: always()
         env:
           E2E_SKIP_CLEANUP: ${{ inputs.skip_cleanup && '1' || '0' }}
+          E2E_SKIP_LOG_COLLECTION: "1"
         run: ./hack/e2e/run.sh cleanup
 
       - name: Cleanup runner workspace

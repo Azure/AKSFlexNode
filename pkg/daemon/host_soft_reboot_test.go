@@ -15,7 +15,6 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
-	"k8s.io/apimachinery/pkg/labels"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -173,13 +172,8 @@ func newSoftHarness(
 	}
 
 	h.reconciler = gatedMachineOperationReconciler{
-		delegate: &flexMachineOperationReconciler{
-			delegate: sdk,
-			handlers: handlers,
-			reader:   reader,
-			target:   flexHostSoftRebootTarget{machineName: "machine1", nodeName: "node1"},
-		},
-		gate: gate,
+		delegate: sdk,
+		gate:     gate,
 	}
 
 	return h
@@ -697,14 +691,6 @@ func TestHostSoftRebootConsumerWiring(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			flex, ok := operations.reconciler.(*flexMachineOperationReconciler)
-			if !ok {
-				t.Fatalf("reconciler type = %T", operations.reconciler)
-			}
-			if len(flex.mapOperation(ctx, op)) != 1 {
-				t.Fatal("matching Node selector was not queued")
-			}
-
 			wrapped := gatedMachineOperationReconciler{delegate: operations.reconciler, gate: gate}
 			if _, err := wrapped.ReconcileMachineOperation(ctx, "soft"); err != nil {
 				t.Fatal(err)
@@ -831,49 +817,5 @@ func TestFlexHostSoftRebootTarget(t *testing.T) {
 				t.Fatalf("error lacks Node context: %v", err)
 			}
 		})
-	}
-}
-
-func TestFlexOperationWatchUsesLiveIdentityAndLabels(t *testing.T) {
-	t.Parallel()
-
-	node := &corev1.Node{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "node1",
-			Labels: map[string]string{
-				"rack": "a",
-			},
-		},
-	}
-	op := softOperation("soft")
-	op.Spec.MachineRef = ""
-	op.Spec.MachineSelector = &metav1.LabelSelector{
-		MatchLabels: map[string]string{
-			"rack": "a",
-		},
-	}
-	c := softClient(node, op)
-	h := newSoftHarness(t, c, c)
-	watch := h.reconciler.delegate.(*flexMachineOperationReconciler)
-	if len(watch.mapOperation(t.Context(), op)) != 1 {
-		t.Fatal("selector operation was not queued")
-	}
-	if _, err := h.reconciler.ReconcileMachineOperation(t.Context(), "soft"); err != nil {
-		t.Fatal(err)
-	}
-	if h.calls != 1 {
-		t.Fatalf("reboot calls = %d, want 1", h.calls)
-	}
-
-	foreign := softOperation("foreign")
-	foreign.Spec.MachineRef = "node1"
-	if len(watch.mapOperation(t.Context(), foreign)) != 0 {
-		t.Fatal("node name admitted as machine identity")
-	}
-
-	missingNode := softClient(op.DeepCopy())
-	matches, err := watch.target.MatchSelector(t.Context(), missingNode, op.Spec.OperationKind, labels.SelectorFromSet(labels.Set{"rack": "a"}))
-	if err != nil || matches {
-		t.Fatalf("missing Node: match = %v, error = %v", matches, err)
 	}
 }

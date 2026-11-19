@@ -350,7 +350,7 @@ state_dump() {
 # local cluster/kubeconfig operations so concurrent kubectl calls never observe a
 # partially-written or context-less kubeconfig and fall back to localhost:8080.
 with_cluster_lock() (
-  local lock_dir="${E2E_WORK_DIR}/cluster.lock"
+  local lock_dir="${E2E_CLUSTER_LOCK_DIR:-${E2E_WORK_DIR}/cluster.lock}"
   local deadline=$((SECONDS + ${E2E_NODE_JOIN_TIMEOUT:-300}))
 
   mkdir -p "${E2E_WORK_DIR}"

@@ -167,10 +167,8 @@ _build_controller_image() {
 
   _ensure_local_registry_unlocked || return 1
 
-  local version git_commit build_time tag local_port host_port local_image cluster_image pf_pid
-  version="${VERSION:-dev}"
+  local git_commit tag local_port host_port local_image cluster_image pf_pid
   git_commit="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
   # Include a per-build value so retries never reuse a tag that kubelet may
   # have negatively cached after an earlier registry or push failure.
   tag="$(_sanitize_image_tag "e2e-${GITHUB_RUN_ID:-local}-${E2E_NAME_SUFFIX}-${git_commit}-$(date -u +%s)-${RANDOM}")"
@@ -181,18 +179,11 @@ _build_controller_image() {
 
   log_section "Building AKS Flex Controller Image"
   log_info "Building controller image ${local_image} and pushing to in-cluster local registry"
-  if ! (
-    cd "${REPO_ROOT}"
-    DOCKER_BUILDKIT=1 docker build \
-      --platform linux/amd64 \
-      --file Dockerfile.aks-flex-controller \
-      --build-arg "VERSION=${version}" \
-      --build-arg "GIT_COMMIT=${git_commit}" \
-      --build-arg "BUILD_TIME=${build_time}" \
-      --tag "${local_image}" \
-      .
-  ); then
-    return 1
+  if [[ -n "${E2E_CONTROLLER_BUILD_IMAGE:-}" ]]; then
+    docker tag "${E2E_CONTROLLER_BUILD_IMAGE}" "${local_image}" || return 1
+    docker image rm "${E2E_CONTROLLER_BUILD_IMAGE}" >/dev/null 2>&1 || true
+  else
+    _compile_controller_image "${local_image}" || return 1
   fi
 
   local pushed=0 attempt
@@ -216,6 +207,21 @@ _build_controller_image() {
   docker image rm "${local_image}" >/dev/null 2>&1 || true
   out_image="${cluster_image}"
 }
+
+_compile_controller_image() (
+  local image="$1" git_commit build_time
+  git_commit="$(git -C "${REPO_ROOT}" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+  build_time="$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+  cd "${REPO_ROOT}"
+  DOCKER_BUILDKIT=1 docker build \
+    --platform linux/amd64 \
+    --file Dockerfile.aks-flex-controller \
+    --build-arg "VERSION=${VERSION:-dev}" \
+    --build-arg "GIT_COMMIT=${git_commit}" \
+    --build-arg "BUILD_TIME=${build_time}" \
+    --tag "${image}" \
+    .
+)
 
 _controller_image_from_state_or_env() {
   if [[ -n "${E2E_CONTROLLER_IMAGE:-}" ]]; then

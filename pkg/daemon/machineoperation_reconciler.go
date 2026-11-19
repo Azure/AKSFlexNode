@@ -171,12 +171,7 @@ func machineOperationReconciler(
 		"Machina MachineOperation API found; enabling machine operation reconciler",
 	)
 	return machineOperationReconcilerResult{
-		reconciler: &flexMachineOperationReconciler{
-			delegate: reconciler,
-			handlers: operationHandlers,
-			reader:   opts.Reader,
-			target:   target,
-		},
+		reconciler: reconciler,
 		softReboot: softReboot,
 	}, nil
 }

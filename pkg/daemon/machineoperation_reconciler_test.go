@@ -902,10 +902,6 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 				t.Fatalf("machineOperationReconciler: %v", err)
 			}
 
-			flex, ok := result.reconciler.(*flexMachineOperationReconciler)
-			if !ok || flex.handlers[machinav1alpha3.OperationHostSoftReboot] == nil {
-				t.Fatal("HostSoftReboot handler is not registered")
-			}
 			if _, err := result.reconciler.ReconcileMachineOperation(t.Context(), "reboot-1"); err != nil {
 				t.Fatalf("ReconcileMachineOperation: %v", err)
 			}

@@ -319,10 +319,20 @@ REMOTE
 
 upgrade_drift_all() {
   log_section "Controller Machine Repave (all modes)"
-  upgrade_drift_mode msi
-  upgrade_drift_mode token
-  upgrade_drift_mode kubeadm
-  localdns_disable_repave_msi
+  (
+    upgrade_drift_mode msi
+    localdns_disable_repave_msi
+  ) &
+  local msi_pid=$!
+  upgrade_drift_mode token &
+  local token_pid=$!
+  upgrade_drift_mode kubeadm &
+  local kubeadm_pid=$!
+  local failed=0
+  wait "${msi_pid}" || failed=1
+  wait "${token_pid}" || failed=1
+  wait "${kubeadm_pid}" || failed=1
+  return "${failed}"
 }
 
 upgrade_drift_msi() { upgrade_drift_mode msi; }
