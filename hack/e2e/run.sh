@@ -10,7 +10,7 @@
 #                 ARM registration, join/validate/smoke, unjoin/absence,
 #                 rejoin/validate/smoke, nspawn lifecycle, agent upgrade,
 #                 host root migration, upgrade drift, worker isolation, logs, and cleanup
-#   infra         Deploy infrastructure, CNI, and controller (AKS + 5 VMs)
+#   infra         Deploy infrastructure, CNI, and controller (AKS + 6 VMs)
 #   arm-registration Validate MSI-based registration through the ARM Machine API
 #   join          Join all nodes to the cluster (requires prior infra)
 #   join-msi      Join only the MSI node
@@ -181,9 +181,14 @@ cmd_all() {
 
   log_section "AKS Flex Node E2E Test - Full Run"
 
-  # Build
+  # Compile while Azure provisions the cluster and VMs.
+  local build_pid=""
   if [[ "${SKIP_BUILD}" != "1" ]]; then
-    ensure_binary
+    if [[ -z "${E2E_BINARY:-}" || ! -f "${E2E_BINARY}" ]]; then
+      E2E_BINARY="${E2E_WORK_DIR}/aks-flex-node"
+    fi
+    ensure_binary &
+    build_pid=$!
   else
     if [[ -z "${E2E_BINARY:-}" || ! -f "${E2E_BINARY:-}" ]]; then
       log_error "--skip-build requires --binary <path> or E2E_BINARY set to an existing file"
@@ -192,9 +197,78 @@ cmd_all() {
     log_info "Skipping build, using: ${E2E_BINARY}"
   fi
 
+  local controller_build_pid=""
+  if [[ -z "${E2E_CONTROLLER_IMAGE:-}" ]]; then
+    E2E_CONTROLLER_BUILD_IMAGE="aks-flex-controller-e2e:${E2E_NAME_SUFFIX}"
+    _compile_controller_image "${E2E_CONTROLLER_BUILD_IMAGE}" > "${E2E_LOG_DIR}/controller-build.log" 2>&1 &
+    controller_build_pid=$!
+  fi
+
   # Infrastructure, CNI, and in-cluster machine endpoint
   infra_deploy
+  if [[ -n "${build_pid}" ]]; then
+    wait "${build_pid}"
+  fi
+  if [[ -n "${controller_build_pid}" ]]; then
+    if ! wait "${controller_build_pid}"; then
+      log_error "Controller image build failed; see ${E2E_LOG_DIR}/controller-build.log"
+      return 1
+    fi
+  fi
   ensure_cluster_dependencies
+
+  # Each lane owns its configs, state and kubeconfig, but cluster writes share a lock.
+  export E2E_CLUSTER_LOCK_DIR="${E2E_WORK_DIR}/cluster.lock"
+  cmd_isolation_lane > "${E2E_LOG_DIR}/isolation-runner.log" 2>&1 &
+  local isolation_pid=$!
+  cmd_lifecycle_e2e &
+  local lifecycle_pid=$!
+  wait "${lifecycle_pid}" || exit_code=1
+  if ! wait "${isolation_pid}"; then
+    log_error "Worker isolation lane failed"
+    tail -n 100 "${E2E_LOG_DIR}/isolation-runner.log"
+    exit_code=1
+  fi
+
+  if [[ "${E2E_SKIP_LOG_COLLECTION:-0}" != "1" ]]; then
+    collect_logs || true
+  fi
+  cleanup || true
+
+  echo ""
+  log_section "E2E Test Complete"
+  local duration
+  duration=$(timer_elapsed "${overall_start}")
+
+  if [[ "${exit_code}" -eq 0 ]]; then
+    log_success "All tests PASSED (${duration}s)"
+  else
+    log_error "Some tests FAILED (${duration}s)"
+    log_info "Logs available in: ${E2E_LOG_DIR}/"
+  fi
+
+  return "${exit_code}"
+}
+
+cmd_isolation_lane() (
+  local lane_dir="${E2E_WORK_DIR}/isolation"
+  mkdir -p "${lane_dir}"
+  jq '.token_vm_name = .isolation_vm_name
+    | .token_vm_ip = .isolation_vm_ip
+    | .token_vm_private_ip = .isolation_vm_private_ip' \
+    "${E2E_STATE_FILE}" > "${lane_dir}/state.json"
+  cp "${KUBECONFIG}" "${lane_dir}/kubeconfig"
+  E2E_WORK_DIR="${lane_dir}"
+  E2E_STATE_FILE="${lane_dir}/state.json"
+  export KUBECONFIG="${lane_dir}/kubeconfig"
+  # Retain nspawn -> none -> OCI -> nspawn transitions on one host.
+  node_join_token
+  validate_node_joined "$(state_get token_vm_name)"
+  isolation_all
+)
+
+cmd_lifecycle_e2e() {
+  local exit_code=0
 
   # ── Real ARM Machine registration ───────────────────────────────────
   arm_machine_registration_e2e
@@ -231,28 +305,7 @@ cmd_all() {
   # ── Controller-backed machine repave after agent upgrade ───────────────
   upgrade_drift_all
 
-  # Preserve the existing nspawn checks, then reuse the token VM for new workers.
-  isolation_all
-
-  # Collect logs (always, even if tests fail)
-  collect_logs || true
-
-  # Cleanup
-  cleanup || true
-
-  echo ""
-  log_section "E2E Test Complete"
-  local duration
-  duration=$(timer_elapsed "${overall_start}")
-
-  if [[ "${exit_code}" -eq 0 ]]; then
-    log_success "All tests PASSED (${duration}s)"
-  else
-    log_error "Some tests FAILED (${duration}s)"
-    log_info "Logs available in: ${E2E_LOG_DIR}/"
-  fi
-
-  return ${exit_code}
+  return "${exit_code}"
 }
 
 # ---------------------------------------------------------------------------
@@ -384,7 +437,9 @@ main() {
       collect_logs
       ;;
     cleanup)
-      collect_logs || true
+      if [[ "${E2E_SKIP_LOG_COLLECTION:-0}" != "1" ]]; then
+        collect_logs || true
+      fi
       cleanup
       ;;
     status)
@@ -397,4 +452,6 @@ main() {
   esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
+fi

@@ -137,7 +137,9 @@ collect_logs() {
   log_section "Collecting Logs"
 
   mkdir -p "${E2E_LOG_DIR}"
-  _collect_aks_activity
+  local -a log_pids=()
+  _collect_aks_activity &
+  log_pids+=("$!")
 
   local msi_vm_ip token_vm_ip offline_vm_ip kubeadm_vm_ip arc_vm_ip
   msi_vm_ip="$(state_get msi_vm_ip)"
@@ -147,23 +149,34 @@ collect_logs() {
   arc_vm_ip="$(state_get arc_vm_ip)"
 
   if [[ -n "${msi_vm_ip}" ]]; then
-    _collect_vm_logs "${msi_vm_ip}" "msi" || true
+    _collect_vm_logs "${msi_vm_ip}" "msi" &
+    log_pids+=("$!")
   fi
 
   if [[ -n "${token_vm_ip}" ]]; then
-    _collect_vm_logs "${token_vm_ip}" "token" || true
+    _collect_vm_logs "${token_vm_ip}" "token" &
+    log_pids+=("$!")
   fi
 
   if [[ -n "${offline_vm_ip}" ]]; then
-    _collect_vm_logs "${offline_vm_ip}" "offline" || true
+    _collect_vm_logs "${offline_vm_ip}" "offline" &
+    log_pids+=("$!")
   fi
 
   if [[ -n "${kubeadm_vm_ip}" ]]; then
-    _collect_vm_logs "${kubeadm_vm_ip}" "kubeadm" || true
+    _collect_vm_logs "${kubeadm_vm_ip}" "kubeadm" &
+    log_pids+=("$!")
   fi
 
   if [[ -n "${arc_vm_ip}" ]]; then
-    _collect_vm_logs "${arc_vm_ip}" "arc" || true
+    _collect_vm_logs "${arc_vm_ip}" "arc" &
+    log_pids+=("$!")
+  fi
+  local isolation_vm_ip
+  isolation_vm_ip="$(state_get isolation_vm_ip)"
+  if [[ -n "${isolation_vm_ip}" ]]; then
+    _collect_vm_logs "${isolation_vm_ip}" "isolation" &
+    log_pids+=("$!")
   fi
 
   # Also capture cluster-side info
@@ -197,6 +210,10 @@ collect_logs() {
   kubectl -n unbounded-system logs -l app.kubernetes.io/name=unbounded-net-node --tail=500 --all-containers \
     > "${E2E_LOG_DIR}/unbounded-net-node.log" 2>&1 || true
 
+  local pid
+  for pid in "${log_pids[@]}"; do
+    wait "${pid}" || true
+  done
   log_success "Logs collected in ${E2E_LOG_DIR}/"
   ls -la "${E2E_LOG_DIR}/"
 }
@@ -242,29 +259,29 @@ cleanup() {
     az rest --method delete --url "https://management.azure.com${arc_machine_id}?api-version=2024-07-10" --output none 2>/dev/null || true
   fi
 
-  # Delete VMs first (faster than waiting for full RG delete)
-  log_info "[2/8] Deleting MSI VM: ${msi_vm_name}..."
-  az vm delete --resource-group "${resource_group}" --name "${msi_vm_name}" \
-    --force-deletion yes --yes --no-wait 2>/dev/null || true
+  # Submit independent deletes together; --no-wait still waits for ARM acceptance.
+  local -a delete_pids=()
+  local vm_name
+  for vm_name in "${msi_vm_name}" "${token_vm_name}" "${offline_vm_name}" \
+    "${kubeadm_vm_name}" "${arc_vm_name}" "$(state_get isolation_vm_name)"; do
+    [[ -n "${vm_name}" ]] || continue
+    log_info "Deleting VM: ${vm_name}..."
+    az vm delete --resource-group "${resource_group}" --name "${vm_name}" \
+      --force-deletion yes --yes --no-wait 2>/dev/null &
+    delete_pids+=("$!")
+  done
+  log_info "Deleting AKS cluster: ${cluster_name}..."
+  az aks delete --resource-group "${resource_group}" --name "${cluster_name}" \
+    --yes --no-wait 2>/dev/null &
+  delete_pids+=("$!")
 
-  log_info "[3/8] Deleting Token VM: ${token_vm_name}..."
-  az vm delete --resource-group "${resource_group}" --name "${token_vm_name}" \
-    --force-deletion yes --yes --no-wait 2>/dev/null || true
-
-  log_info "[4/8] Deleting Offline VM: ${offline_vm_name}..."
-  az vm delete --resource-group "${resource_group}" --name "${offline_vm_name}" \
-    --force-deletion yes --yes --no-wait 2>/dev/null || true
-
-  log_info "[5/8] Deleting Kubeadm VM: ${kubeadm_vm_name}..."
-  az vm delete --resource-group "${resource_group}" --name "${kubeadm_vm_name}" \
-    --force-deletion yes --yes --no-wait 2>/dev/null || true
-
-  log_info "[6/8] Deleting Arc VM: ${arc_vm_name}..."
-  az vm delete --resource-group "${resource_group}" --name "${arc_vm_name}" \
-    --force-deletion yes --yes --no-wait 2>/dev/null || true
+  local pid
+  for pid in "${delete_pids[@]}"; do
+    wait "${pid}" || true
+  done
 
   # Clean up leftover networking resources tied to our deployment
-  log_info "[7/8] Cleaning up networking resources..."
+  log_info "Cleaning up networking resources..."
   local run_id="${GITHUB_RUN_ID:-}"
   if [[ -n "${run_id}" ]]; then
     local resource_ids
@@ -278,10 +295,6 @@ cleanup() {
       done <<<"${resource_ids}"
     done
   fi
-
-  log_info "[8/8] Deleting AKS cluster: ${cluster_name}..."
-  az aks delete --resource-group "${resource_group}" --name "${cluster_name}" \
-    --yes --no-wait 2>/dev/null || true
 
   # If we created the VNet/NSG via Bicep, they'll be cleaned up when no
   # resources reference them, or on next deployment.  We don't delete the
