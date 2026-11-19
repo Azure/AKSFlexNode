@@ -1,7 +1,7 @@
 # Checks the agent's image for Azure Container Linux and the tools around it: ShellCheck on the
-# image's scripts, a compile check of the harness's Python, the install's Butane config rendered
-# with Butane --strict, as an operator renders it, and the image built for its platforms, as a
-# release builds it, without pushing it.
+# image's scripts, a compile check of the harnesses' Python and the A/B update harness's unit tests,
+# the install's Butane config rendered with Butane --strict, as an operator renders it, and the
+# image built for its platforms, as a release builds it, without pushing it.
 name: ACL Container Checks
 
 on:
@@ -16,6 +16,7 @@ on:
       - scripts/aks-flex-node-agent-container.bu
       - scripts/bootstrap.sh
       - hack/acl-container/**
+      - hack/acl-abupdate/**
       - hack/acl/ukiboot.py
       - .github/workflows/acl-container-checks.yml
       - .github/workflows/agent-image-build.yml
@@ -30,6 +31,7 @@ on:
       - scripts/aks-flex-node-agent-container.bu
       - scripts/bootstrap.sh
       - hack/acl-container/**
+      - hack/acl-abupdate/**
       - hack/acl/ukiboot.py
       - .github/workflows/acl-container-checks.yml
       - .github/workflows/agent-image-build.yml
@@ -59,7 +61,10 @@ jobs:
             scripts/agent-image/*
 
       - name: Compile Python
-        run: python3 -m py_compile hack/acl-container/*.py hack/acl/ukiboot.py
+        run: python3 -m py_compile hack/acl-container/*.py hack/acl-abupdate/*.py hack/acl/ukiboot.py
+
+      - name: Test the A/B update harness
+        run: python3 -m unittest discover -s hack/acl-abupdate -p 'test_*.py'
 
       - name: Render the Butane config
         run: |

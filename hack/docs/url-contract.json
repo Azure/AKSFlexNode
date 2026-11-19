@@ -547,6 +547,33 @@
       ]
     },
     {
+      "path": "hack/acl-abupdate/README.md",
+      "protectAnchors": true,
+      "anchors": [
+        "adding-a-scenario",
+        "annotation-driven-updates",
+        "azure-container-linux-ab-update-harness",
+        "cluster-mode",
+        "commands",
+        "custom-builds",
+        "how-a-build-works",
+        "images",
+        "quick-start",
+        "requirements",
+        "run-artifacts",
+        "scenarios",
+        "settings",
+        "snapshots",
+        "steps",
+        "targets",
+        "the-images",
+        "the-vm",
+        "trident-acl-agent",
+        "troubleshooting",
+        "what-the-checks-cover"
+      ]
+    },
+    {
       "path": "hack/acl-container/README.md",
       "protectAnchors": false,
       "anchors": [
