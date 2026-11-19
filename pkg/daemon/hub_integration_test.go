@@ -84,7 +84,7 @@ func TestHubReadsIntentWithoutRepave(t *testing.T) {
 			},
 		},
 	}
-	operator := &fakeNodeOperator{
+	operator := &fakeWorkerRuntime{
 		state: &State{
 			AppliedSettingsVersion:   "42",
 			AppliedKubernetesVersion: "1.34.0",
@@ -122,7 +122,7 @@ func TestHubUsesExistingMachineQueue(t *testing.T) {
 					},
 				},
 			}
-			operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "42", ActiveMachine: "kube1"}}
+			operator := &fakeWorkerRuntime{state: &State{AppliedSettingsVersion: "42", ActiveMachine: "kube1"}}
 			node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}}
 			hub := &testHubMachineReconciler{}
 			wantCalls := 1
@@ -196,7 +196,7 @@ func TestReconcilerReportsMachineStatusBeforeHub(t *testing.T) {
 			},
 		},
 	}
-	operator := &fakeNodeOperator{
+	operator := &fakeWorkerRuntime{
 		state: &State{
 			AppliedSettingsVersion:   "42",
 			AppliedKubernetesVersion: "1.34.0",

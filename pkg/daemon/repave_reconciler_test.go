@@ -13,13 +13,16 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/AKSFlexNode/pkg/config"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 func TestRepaveReconcilerApplyGoalState(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0", SettingsVersion: "42"}}}
-	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}, newState: &State{AppliedSettingsVersion: "42", AppliedKubernetesVersion: "1.34.0", PreviousSettingsVersion: "41", PreviousKubernetesVersion: "1.33.0", ActiveMachine: "kube2"}}
+	operator := &fakeWorkerRuntime{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}}
 	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
 	if err := repaves.reconcileOnce(context.Background()); err != nil {
@@ -41,7 +44,7 @@ func TestRepaveReconcilerResetDelete(t *testing.T) {
 
 	machines := &fakeMachineClient{notFound: true}
 	node := &corev1.Node{ObjectMeta: metav1.ObjectMeta{Name: "node1"}, Spec: corev1.NodeSpec{Taints: []corev1.Taint{deletionTaint()}}}
-	operator := &fakeNodeOperator{}
+	operator := &fakeWorkerRuntime{}
 	kubeClient := fakeClient(node)
 	repaves := newTestRepaveReconciler(t, machines, kubeClient, operator)
 
@@ -64,7 +67,7 @@ func TestRepaveReconcilerStateLoadFailurePatchesFailed(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{}}
-	repaves := newTestRepaveReconciler(t, machines, fakeClient(), &fakeNodeOperator{err: errors.New("bad state")})
+	repaves := newTestRepaveReconciler(t, machines, fakeClient(), &fakeWorkerRuntime{err: errors.New("bad state")})
 
 	if err := repaves.reconcileOnce(context.Background()); err == nil {
 		t.Fatal("Reconcile error = nil, want error")
@@ -78,7 +81,7 @@ func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
 	t.Parallel()
 
 	machines := &fakeMachineClient{machine: &aksmachine.Machine{Goal: aksmachine.GoalState{KubernetesVersion: "1.34.0"}}}
-	operator := &fakeNodeOperator{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}}
+	operator := &fakeWorkerRuntime{state: &State{AppliedSettingsVersion: "41", AppliedKubernetesVersion: "1.33.0", ActiveMachine: "kube1"}}
 	repaves := newTestRepaveReconciler(t, machines, fakeClient(), operator)
 
 	err := repaves.reconcileOnce(t.Context())
@@ -90,18 +93,31 @@ func TestRepaveReconcilerRejectsInvalidMachineGoal(t *testing.T) {
 	}
 }
 
-func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator nodeOperator) *repaveReconciler {
+func newTestRepaveReconciler(t *testing.T, machines aksmachine.MachineClient, kubeClient client.Client, operator *fakeWorkerRuntime) *repaveReconciler {
 	t.Helper()
 	repaves, err := newRepaveReconciler(repaveReconcilerOptions{
-		Log:      slog.Default(),
-		Machines: machines,
-		Client:   kubeClient,
-		Operator: operator,
+		Log:       slog.Default(),
+		Machines:  machines,
+		Client:    kubeClient,
+		Runtime:   operator,
+		State:     operator,
+		Config:    &config.Config{},
+		Refresher: noopBootstrapDataRefresher{},
+		HookUnits: func(*slog.Logger) phases.Task { return testTask{name: "hooks"} },
+		Uninstall: operator.uninstall,
+		ClearConfig: testTask{
+			name: "remove-runtime-dirs",
+			run: func() error {
+				operator.state = nil
+				return nil
+			},
+		},
 		NodeName: "node1",
 	})
 	if err != nil {
 		t.Fatalf("newRepaveReconciler: %v", err)
 	}
+	repaves.resolve = fakeResolveMachine
 	return repaves
 }
 
@@ -131,9 +147,8 @@ func (f *fakeMachineClient) PatchStatus(_ context.Context, status aksmachine.Sta
 	return nil
 }
 
-type fakeNodeOperator struct {
+type fakeWorkerRuntime struct {
 	state      *State
-	newState   *State
 	err        error
 	restartErr error
 	resetErr   error
@@ -144,31 +159,86 @@ type fakeNodeOperator struct {
 	stopped    bool
 }
 
-func (f *fakeNodeOperator) LoadState(context.Context) (*State, error) {
+func (f *fakeWorkerRuntime) Load(context.Context) (*State, error) {
 	return f.state, f.err
 }
 
-func (f *fakeNodeOperator) ApplyGoalState(context.Context, *slog.Logger, aksmachine.GoalState) (*State, error) {
-	f.applied = true
-	if f.newState != nil {
-		f.state = f.newState
-		return f.newState, nil
-	}
-	return f.state, nil
+func (f *fakeWorkerRuntime) Save(_ context.Context, state *State) error {
+	f.state = state
+	return nil
 }
 
-func (f *fakeNodeOperator) RestartNode(context.Context, *slog.Logger) error {
-	f.restarted = true
-	return f.restartErr
-}
-
-func (f *fakeNodeOperator) ResetNode(context.Context, *slog.Logger) error {
-	f.reset = true
+func (f *fakeWorkerRuntime) Delete(context.Context) error {
 	f.state = nil
-	return f.resetErr
+	return nil
 }
 
-func (f *fakeNodeOperator) StopDaemon(context.Context, *slog.Logger) error {
-	f.stopped = true
-	return f.stopErr
+func (f *fakeWorkerRuntime) Start(_ *config.Config, _ *slog.Logger, _ string, _ *goalstates.MachineGoalState, _ *goalstates.ContainerImageArchiveStaging) phases.Task {
+	return testTask{
+		name: "start",
+		run: func() error {
+			f.applied = true
+			return nil
+		},
+	}
+}
+
+func (f *fakeWorkerRuntime) Restart(_ *config.Config, _ *slog.Logger, _ string, _ *goalstates.MachineGoalState, _ *goalstates.ContainerImageArchiveStaging) phases.Task {
+	return testTask{
+		name: "restart",
+		run: func() error {
+			f.restarted = true
+			return f.restartErr
+		},
+	}
+}
+
+func (f *fakeWorkerRuntime) Stop(_ *slog.Logger, _ string) phases.Task {
+	return testTask{name: "stop-worker"}
+}
+
+func (f *fakeWorkerRuntime) CleanupNetwork(_ *slog.Logger) phases.Task {
+	return testTask{name: "cleanup-network"}
+}
+
+func (f *fakeWorkerRuntime) Retire(_ *slog.Logger, _ string) phases.Task {
+	return testTask{name: "retire"}
+}
+
+func (f *fakeWorkerRuntime) Reset(_ *slog.Logger) phases.Task {
+	return testTask{
+		name: "reset",
+		run: func() error {
+			f.reset = true
+			return f.resetErr
+		},
+	}
+}
+
+func (f *fakeWorkerRuntime) uninstall(*slog.Logger) phases.Task {
+	return testTask{
+		name: "uninstall",
+		run: func() error {
+			f.stopped = true
+			return f.stopErr
+		},
+	}
+}
+
+type testTask struct {
+	name string
+	run  func() error
+}
+
+func (t testTask) Name() string { return t.name }
+
+func (t testTask) Do(context.Context) error {
+	if t.run != nil {
+		return t.run()
+	}
+	return nil
+}
+
+func fakeResolveMachine(context.Context, *slog.Logger, *config.Config, string) (config.ResolvedMachineGoal, error) {
+	return config.ResolvedMachineGoal{GoalState: &goalstates.MachineGoalState{}}, nil
 }

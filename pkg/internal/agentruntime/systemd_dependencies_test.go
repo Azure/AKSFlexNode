@@ -1,4 +1,4 @@
-package daemon
+package agentruntime
 
 import (
 	"context"
@@ -15,7 +15,7 @@ func TestConfigureNSpawnDependencies(t *testing.T) {
 	t.Parallel()
 
 	systemdDir := filepath.Join(t.TempDir(), "systemd-nspawn@kube1.service.d")
-	task := ConfigureNSpawnDependencies(slog.Default(), &goalstates.RootFS{
+	task := configureNSpawnDependencies(slog.Default(), &goalstates.RootFS{
 		ServiceOverrideFile: filepath.Join(systemdDir, "override.conf"),
 	}, []string{"ib_rdma_configure.service", "storage-ready.service"}).(*configureNSpawnDependenciesTask)
 

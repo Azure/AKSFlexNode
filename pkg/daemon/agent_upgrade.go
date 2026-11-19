@@ -232,7 +232,7 @@ type agentUpgrader interface {
 }
 
 type agentUpgradeStateLoader interface {
-	LoadState(context.Context) (*State, error)
+	Load(context.Context) (*State, error)
 }
 
 type hostAgentUpgradeExecutor struct {
@@ -316,7 +316,7 @@ func recordPendingAgentUpgrade(
 		}
 		return fmt.Errorf("another AgentUpgrade operation %q is pending", existing.OperationName)
 	}
-	loaded, err := state.LoadState(ctx)
+	loaded, err := state.Load(ctx)
 	if err != nil {
 		return fmt.Errorf("load daemon state for AgentUpgrade: %w", err)
 	}

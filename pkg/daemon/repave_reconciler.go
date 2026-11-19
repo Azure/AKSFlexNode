@@ -22,7 +22,10 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/source"
 
 	"github.com/Azure/AKSFlexNode/pkg/aksmachine"
+	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/unbounded/pkg/agent/daemon"
+	"github.com/Azure/unbounded/pkg/agent/goalstates"
+	"github.com/Azure/unbounded/pkg/agent/phases"
 )
 
 const DefaultMachineReconcileInterval = 10 * time.Minute
@@ -65,12 +68,19 @@ type decision struct {
 }
 
 type repaveReconciler struct {
-	log      *slog.Logger
-	machines aksmachine.MachineClient
-	client   client.Client
-	operator nodeOperator
-	nodeName string
-	hub      hubMachineReconciler
+	log         *slog.Logger
+	machines    aksmachine.MachineClient
+	client      client.Client
+	runtime     workerRuntime
+	state       stateStore
+	cfg         *config.Config
+	refresher   bootstrapDataRefresher
+	resolve     machineGoalResolver
+	hookUnits   func(*slog.Logger) phases.Task
+	uninstall   func(*slog.Logger) phases.Task
+	clearConfig phases.Task
+	nodeName    string
+	hub         hubMachineReconciler
 	// machineEvents queues AKS-machine-driven reconciles so cached Node
 	// reads can detect state that existed before the daemon started and then keep
 	// polling for ARM-only machine transitions.
@@ -79,11 +89,17 @@ type repaveReconciler struct {
 }
 
 type repaveReconcilerOptions struct {
-	Log      *slog.Logger
-	Machines aksmachine.MachineClient
-	Client   client.Client
-	Operator nodeOperator
-	NodeName string
+	Log         *slog.Logger
+	Machines    aksmachine.MachineClient
+	Client      client.Client
+	Runtime     workerRuntime
+	State       stateStore
+	Config      *config.Config
+	Refresher   bootstrapDataRefresher
+	HookUnits   func(*slog.Logger) phases.Task
+	Uninstall   func(*slog.Logger) phases.Task
+	ClearConfig phases.Task
+	NodeName    string
 	// Hub reconciles disconnect-tolerance intent from Machine reads. Optional so
 	// tests and callers without Hub support can omit it.
 	Hub hubMachineReconciler
@@ -108,11 +124,29 @@ func newRepaveReconciler(opts repaveReconcilerOptions) (*repaveReconciler, error
 	if opts.Client == nil {
 		return nil, fmt.Errorf("kubernetes client is nil")
 	}
-	if opts.Operator == nil {
-		return nil, fmt.Errorf("node operator is nil")
+	if opts.Runtime == nil {
+		return nil, fmt.Errorf("worker runtime is nil")
 	}
 	if opts.NodeName == "" {
 		return nil, fmt.Errorf("node name is empty")
+	}
+	if opts.State == nil {
+		return nil, fmt.Errorf("state store is nil")
+	}
+	if opts.Config == nil {
+		return nil, fmt.Errorf("config is nil")
+	}
+	if opts.Refresher == nil {
+		return nil, fmt.Errorf("bootstrap data refresher is nil")
+	}
+	if opts.HookUnits == nil {
+		return nil, fmt.Errorf("nspawn hook unit task is nil")
+	}
+	if opts.Uninstall == nil {
+		return nil, fmt.Errorf("uninstall task factory is nil")
+	}
+	if opts.ClearConfig == nil {
+		return nil, fmt.Errorf("config cleanup task is nil")
 	}
 	if opts.MachineReconcileInterval == 0 {
 		opts.MachineReconcileInterval = DefaultMachineReconcileInterval
@@ -121,7 +155,14 @@ func newRepaveReconciler(opts repaveReconcilerOptions) (*repaveReconciler, error
 		log:                      opts.Log,
 		machines:                 opts.Machines,
 		client:                   opts.Client,
-		operator:                 opts.Operator,
+		runtime:                  opts.Runtime,
+		state:                    opts.State,
+		cfg:                      opts.Config,
+		refresher:                opts.Refresher,
+		resolve:                  config.ResolveMachineGoalState,
+		hookUnits:                opts.HookUnits,
+		uninstall:                opts.Uninstall,
+		clearConfig:              opts.ClearConfig,
 		hub:                      opts.Hub,
 		nodeName:                 opts.NodeName,
 		machineEvents:            make(chan event.TypedGenericEvent[struct{}], 1),
@@ -163,7 +204,7 @@ func (r *repaveReconciler) ReconcileRepave(ctx context.Context, source string) (
 }
 
 func (r *repaveReconciler) reconcileOnce(ctx context.Context) error {
-	state, err := r.operator.LoadState(ctx)
+	state, err := r.state.Load(ctx)
 	if err != nil {
 		_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, "", err.Error())
 		return err
@@ -254,7 +295,7 @@ func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goa
 	if err := r.patchStatus(ctx, aksmachine.ProvisioningStateReconciling, stateObservedVersion(state), "applying machine goal state"); err != nil {
 		return err
 	}
-	newState, err := r.operator.ApplyGoalState(ctx, r.log, goal)
+	newState, err := r.executeGoalState(ctx, goal)
 	if err != nil {
 		_ = r.patchStatus(ctx, aksmachine.ProvisioningStateFailed, stateObservedVersion(state), err.Error())
 		return err
@@ -262,15 +303,54 @@ func (r *repaveReconciler) applyGoalState(ctx context.Context, state *State, goa
 	return r.patchStatus(ctx, aksmachine.ProvisioningStateSucceeded, newState.AppliedSettingsVersion, "machine goal state applied")
 }
 
+func (r *repaveReconciler) executeGoalState(ctx context.Context, goal aksmachine.GoalState) (*State, error) {
+	active, err := activeMachineFromStore(ctx, r.state)
+	if err != nil {
+		return nil, err
+	}
+	cfg, err := configForGoalState(ctx, r.log, r.cfg, r.refresher, goal)
+	if err != nil {
+		return nil, err
+	}
+	oldMachine := active.Name
+	newMachine := goalstates.AlternateMachine(oldMachine)
+	r.log.Info("starting nspawn machine goal-state apply",
+		"oldMachine", oldMachine,
+		"newMachine", newMachine,
+		"settingsVersion", goal.SettingsVersion,
+		"kubernetesVersion", cfg.Components.Kubernetes,
+	)
+	resolved, err := r.resolve(ctx, r.log, cfg, newMachine)
+	if err != nil {
+		return nil, fmt.Errorf("resolve goal state for repave: %w", err)
+	}
+	next := nextAppliedState(active.State, goal, &activeMachine{Name: newMachine})
+	tasks := phases.Serial(r.log,
+		r.runtime.Stop(r.log, oldMachine),
+		r.runtime.CleanupNetwork(r.log),
+		r.hookUnits(r.log),
+		r.runtime.Start(cfg, r.log, newMachine, resolved.GoalState, resolved.ContainerImageArchives),
+		&saveStateTask{store: r.state, state: next},
+		r.runtime.Retire(r.log, oldMachine),
+	)
+	if err := tasks.Do(ctx); err != nil {
+		return nil, fmt.Errorf("apply machine goal state: %w", err)
+	}
+	return next, nil
+}
+
 func (r *repaveReconciler) resetDelete(ctx context.Context) error {
 	// Stage 1 clears local runtime/settings while keeping this daemon alive.
-	if err := r.operator.ResetNode(ctx, r.log); err != nil {
+	if err := phases.ExecuteTask(ctx, r.log, r.runtime.Reset(r.log)); err != nil {
 		return err
+	}
+	if err := phases.ExecuteTask(ctx, r.log, r.clearConfig); err != nil {
+		return fmt.Errorf("%s: %w", r.clearConfig.Name(), err)
 	}
 
 	// Stage 2 stops this daemon. The RP owns Kubernetes Node deletion after it
 	// observes the VM-side cleanup signal through daemon shutdown/Node readiness.
-	return r.operator.StopDaemon(ctx, r.log)
+	return phases.ExecuteTask(ctx, r.log, r.uninstall(r.log))
 }
 
 func (r *repaveReconciler) patchStatus(ctx context.Context, provisioningState aksmachine.ProvisioningState, observedSettingsVersion string, message string) error {

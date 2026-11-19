@@ -14,6 +14,7 @@ import (
 	"github.com/Azure/AKSFlexNode/pkg/arc"
 	"github.com/Azure/AKSFlexNode/pkg/config"
 	"github.com/Azure/AKSFlexNode/pkg/daemon"
+	"github.com/Azure/AKSFlexNode/pkg/internal/agentruntime"
 	"github.com/Azure/AKSFlexNode/pkg/logger"
 	"github.com/Azure/AKSFlexNode/pkg/npd"
 	"github.com/Azure/unbounded/pkg/agent/goalstates"
@@ -70,12 +71,12 @@ func (h *handler) execute(ctx context.Context) error {
 	}
 	log := createPreflightLogger(cfg.Agent.LogLevel)
 
-	agentCfg, gs, _, err := config.ResolveMachineGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
+	resolved, err := config.ResolveMachineGoalState(ctx, log, cfg, goalstates.NSpawnMachineKube1)
 	if err != nil {
 		return fmt.Errorf("preflight failed to resolve goal state: %w", err)
 	}
 
-	nodeChecks := nodestart.Preflight(log, *agentCfg, gs)
+	nodeChecks := nodestart.Preflight(log, *resolved.AgentConfig, resolved.GoalState)
 	if cfg.UsesKubeconfigCredentials() {
 		nodeChecks, err = pairedKubeconfigChecks(cfg, nodeChecks)
 		if err != nil {
@@ -85,14 +86,14 @@ func (h *handler) execute(ctx context.Context) error {
 
 	failMachinesTargetForMissing := daemon.Containerized() || strings.TrimSpace(cfg.Bootstrap.OfflineArtifacts.Source) != ""
 	checks := daemon.PreflightChecks(preflight.Flatten(
-		[]preflight.Checker{daemon.CheckMachinesTarget(
+		[]preflight.Checker{agentruntime.CheckMachinesTarget(
 			log,
 			failMachinesTargetForMissing,
 		)},
 		arc.Preflight(cfg, log),
-		host.Preflight(log, *agentCfg, gs),
+		host.Preflight(log, *resolved.AgentConfig, resolved.GoalState),
 		nodeChecks,
-		rootfs.Preflight(log, *agentCfg, gs),
+		rootfs.Preflight(log, *resolved.AgentConfig, resolved.GoalState),
 		npd.Preflight(cfg),
 	))
 
