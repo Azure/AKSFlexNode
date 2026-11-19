@@ -285,14 +285,27 @@ cleanup() {
   local run_id="${GITHUB_RUN_ID:-}"
   if [[ -n "${run_id}" ]]; then
     local resource_ids
+    local -a network_delete_pids=()
     for res_type in networkInterfaces publicIPAddresses networkSecurityGroups disks; do
       resource_ids="$(az resource list --resource-group "${resource_group}" \
         --query "[?tags.\"github-run\"=='${run_id}' && contains(type, '${res_type}')].id" \
         -o tsv 2>/dev/null || true)"
       while read -r id; do
         [[ -n "${id}" ]] || continue
-        az resource delete --ids "${id}" --no-wait 2>/dev/null || true
+        az resource delete --ids "${id}" --no-wait 2>/dev/null &
+        network_delete_pids+=("$!")
+        # Bound Azure CLI memory use and request concurrency on hosted runners.
+        if (( ${#network_delete_pids[@]} == 4 )); then
+          for pid in "${network_delete_pids[@]}"; do
+            wait "${pid}" || true
+          done
+          network_delete_pids=()
+        fi
       done <<<"${resource_ids}"
+      for pid in "${network_delete_pids[@]}"; do
+        wait "${pid}" || true
+      done
+      network_delete_pids=()
     done
   fi
 
