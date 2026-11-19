@@ -9,7 +9,7 @@
 #   all           Run the full E2E flow (default): build, infra, CNI, controller,
 #                 ARM registration, join/validate/smoke, unjoin/absence,
 #                 rejoin/validate/smoke, nspawn lifecycle, agent upgrade,
-#                 host root migration, upgrade drift, logs, and cleanup
+#                 host root migration, upgrade drift, worker isolation, logs, and cleanup
 #   infra         Deploy infrastructure, CNI, and controller (AKS + 5 VMs)
 #   arm-registration Validate MSI-based registration through the ARM Machine API
 #   join          Join all nodes to the cluster (requires prior infra)
@@ -27,6 +27,7 @@
 #   validate      Verify nodes joined + run smoke tests
 #   validate-absent Verify all flex nodes are gone after unjoin
 #   smoke         Run smoke tests only (pods on flex nodes)
+#   isolation     Validate none/OCI lifecycle, workloads, reset and rejoin on the token VM
 #   nspawn-lifecycle Validate generated lifecycle hooks and restart reconciliation
 #   agent-upgrade Validate managed binary upgrade, rollback, and retry
 #   host-root-migration Upgrade a token node installed by a release before the host root
@@ -120,6 +121,8 @@ source "${SCRIPT_DIR}/lib/upgrade-drift.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/agent-upgrade.sh"
 # shellcheck disable=SC1091
+source "${SCRIPT_DIR}/lib/isolation.sh"
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/cleanup.sh"
 # shellcheck disable=SC1091
 source "${SCRIPT_DIR}/lib/runner.sh"
@@ -144,7 +147,7 @@ usage() {
 parse_args() {
   while [[ $# -gt 0 ]]; do
     case "$1" in
-      all|infra|arm-registration|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|nspawn-lifecycle|agent-upgrade|host-root-migration|upgrade-drift|logs|cleanup|runner-cleanup|status)
+      all|infra|arm-registration|join|join-msi|join-token|join-offline|join-kubeadm|join-arc|unjoin|unjoin-msi|unjoin-token|unjoin-offline|unjoin-kubeadm|unjoin-arc|validate|validate-absent|smoke|isolation|nspawn-lifecycle|agent-upgrade|host-root-migration|upgrade-drift|logs|cleanup|runner-cleanup|status)
         COMMAND="$1"; shift ;;
       -g|--resource-group) export E2E_RESOURCE_GROUP="$2"; shift 2 ;;
       -l|--location)       export E2E_LOCATION="$2"; shift 2 ;;
@@ -227,6 +230,9 @@ cmd_all() {
 
   # ── Controller-backed machine repave after agent upgrade ───────────────
   upgrade_drift_all
+
+  # Preserve the existing nspawn checks, then reuse the token VM for new workers.
+  isolation_all
 
   # Collect logs (always, even if tests fail)
   collect_logs || true
@@ -350,6 +356,11 @@ main() {
       ;;
     smoke)
       smoke_test_all
+      ;;
+    isolation)
+      ensure_binary
+      ensure_cluster_dependencies
+      isolation_all
       ;;
     nspawn-lifecycle)
       nspawn_lifecycle_all

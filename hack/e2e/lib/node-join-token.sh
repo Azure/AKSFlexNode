@@ -20,7 +20,8 @@ source "$(dirname "${BASH_SOURCE[0]}")/common.sh"
 # release tag, with that release
 # ---------------------------------------------------------------------------
 node_join_token() {
-  local release="${1:-}"
+  local release="${1:-}" isolation="${2:-nspawn}"
+  case "${isolation}" in nspawn|none|container) ;; *) log_error "Unknown worker isolation: ${isolation}"; return 1 ;; esac
   log_section "Joining Token Node${release:+ with ${release}}"
   local start
   start=$(timer_start)
@@ -71,6 +72,7 @@ node_join_token() {
 
   jq \
     --arg nodeIP "${vm_private_ip}" \
+    --arg isolation "${isolation}" \
     --arg machineEndpointURL "${E2E_CONTROLLER_SERVICE_PROXY_PATH}" \
     --arg kubernetesVersion "${E2E_KUBERNETES_VERSION}" \
     --arg containerdVersion "${E2E_CONTAINERD_VERSION}" \
@@ -81,6 +83,9 @@ node_join_token() {
     --arg kubeReservedCPU "${E2E_KUBELET_KUBE_RESERVED_CPU}" \
     --arg kubeReservedMemory "${E2E_KUBELET_KUBE_RESERVED_MEMORY}" \
     '.agent.logLevel = "debug"
+      | .bootstrap.isolation = $isolation
+      | .bootstrap.experimental.containerIsolation = ($isolation == "container")
+      | if $isolation == "nspawn" then . else .agent.machineReconcileInterval = "5s" end
       | .agent.machineClient.mode = "in-cluster"
       | .agent.machineClient.endpointUrl = $machineEndpointURL
       | .agent.requireMachineRegistration = true
