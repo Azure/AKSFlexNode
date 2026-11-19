@@ -676,7 +676,7 @@ func TestHostSoftRebootConsumerWiring(t *testing.T) {
 					return nil
 				},
 			}
-			reconciler, softReboot, err := machineOperationReconciler(machineOperationReconcilerOptions{
+			operations, err := machineOperationReconciler(machineOperationReconcilerOptions{
 				Client:         c,
 				Reader:         c,
 				Log:            log,
@@ -697,15 +697,15 @@ func TestHostSoftRebootConsumerWiring(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			flex, ok := reconciler.(*flexMachineOperationReconciler)
+			flex, ok := operations.reconciler.(*flexMachineOperationReconciler)
 			if !ok {
-				t.Fatalf("reconciler type = %T", reconciler)
+				t.Fatalf("reconciler type = %T", operations.reconciler)
 			}
 			if len(flex.mapOperation(ctx, op)) != 1 {
 				t.Fatal("matching Node selector was not queued")
 			}
 
-			wrapped := gatedMachineOperationReconciler{delegate: reconciler, gate: gate}
+			wrapped := gatedMachineOperationReconciler{delegate: operations.reconciler, gate: gate}
 			if _, err := wrapped.ReconcileMachineOperation(ctx, "soft"); err != nil {
 				t.Fatal(err)
 			}
@@ -714,7 +714,7 @@ func TestHostSoftRebootConsumerWiring(t *testing.T) {
 			}
 
 			bootID = "boot2"
-			if err := softReboot.PublishStartup(ctx); err != nil {
+			if err := operations.softReboot.PublishStartup(ctx); err != nil {
 				t.Fatal(err)
 			}
 

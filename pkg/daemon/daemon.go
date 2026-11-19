@@ -140,7 +140,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 		return err
 	}
 	gate := newStartupGate()
-	machineOperations, softReboot, err := machineOperationReconciler(machineOperationReconcilerOptions{
+	machineOperations, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client:               mgr.GetClient(),
 		Reader:               mgr.GetAPIReader(),
 		Log:                  log,
@@ -166,7 +166,7 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 	if err := daemon.SetupController(
 		"aks-flex-node-daemon",
 		mgr,
-		gatedMachineOperationReconciler{delegate: machineOperations, gate: gate},
+		gatedMachineOperationReconciler{delegate: machineOperations.reconciler, gate: gate},
 		gatedRepaveReconciler{delegate: repaves, gate: gate},
 	); err != nil {
 		return fmt.Errorf("setup daemon controller: %w", err)
@@ -189,10 +189,8 @@ func Run(ctx context.Context, cfg *config.Config, log *slog.Logger) error {
 			ctx,
 			log,
 			func(ctx context.Context) error {
-				if softReboot != nil {
-					if err := softReboot.PublishStartup(ctx); err != nil {
-						return fmt.Errorf("publish HostSoftReboot startup results: %w", err)
-					}
+				if err := machineOperations.softReboot.PublishStartup(ctx); err != nil {
+					return fmt.Errorf("publish HostSoftReboot startup results: %w", err)
 				}
 				return publishAndClearAgentUpgradeSignal(ctx, log, directClient, upgrades)
 			},

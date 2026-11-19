@@ -17,6 +17,25 @@ import (
 	agentdaemon "github.com/Azure/unbounded/pkg/agent/daemon"
 )
 
+type hostSoftRebootHandler interface {
+	Reconcile(context.Context, agentdaemon.MachineOperationStore[int64], agentdaemon.MachineOperation) (ctrl.Result, error)
+	PublishStartup(context.Context) error
+}
+
+type noopHostSoftRebootHandler struct{}
+
+func (noopHostSoftRebootHandler) Reconcile(
+	context.Context,
+	agentdaemon.MachineOperationStore[int64],
+	agentdaemon.MachineOperation,
+) (ctrl.Result, error) {
+	return ctrl.Result{}, nil
+}
+
+func (noopHostSoftRebootHandler) PublishStartup(context.Context) error {
+	return nil
+}
+
 type flexHostSoftRebootTarget struct {
 	machineName string
 	nodeName    string

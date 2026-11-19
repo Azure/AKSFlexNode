@@ -44,6 +44,11 @@ type machineOperationReconcilerOptions struct {
 	Gate                 *startupGate
 }
 
+type machineOperationReconcilerResult struct {
+	reconciler daemon.MachineOperationRequestReconciler
+	softReboot hostSoftRebootHandler
+}
+
 type machineOperationHandlers struct {
 	log          *slog.Logger
 	runtime      agentruntime.Runtime
@@ -54,24 +59,24 @@ type machineOperationHandlers struct {
 	clearConfig  phases.Task
 	agentUpgrade agentUpgradeExecutor
 	gate         *startupGate
-	softReboot   *daemon.HostSoftRebootHandler
+	softReboot   hostSoftRebootHandler
 }
 
 // machineOperationReconciler runs MachineOperations when the Machina CRD is available.
-// The reboot handler is nil when operation handling is disabled or the API is absent.
+// Both returned handlers are no-ops when handling is disabled or the API is absent.
 // TODO: Add a new machineOperationMode value when ARM-backed MachineOperations are supported.
 func machineOperationReconciler(
 	opts machineOperationReconcilerOptions,
 	host daemon.HostRebooter,
-) (daemon.MachineOperationRequestReconciler, *daemon.HostSoftRebootHandler, error) {
+) (machineOperationReconcilerResult, error) {
 	if opts.Client == nil {
-		return nil, nil, fmt.Errorf("kubernetes client is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("kubernetes client is nil")
 	}
 	if opts.Runtime == nil {
-		return nil, nil, fmt.Errorf("worker runtime is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("worker runtime is nil")
 	}
 	if opts.AgentUpgrade == nil {
-		return nil, nil, fmt.Errorf("agent upgrade executor is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("agent upgrade executor is nil")
 	}
 	if opts.MachineOperationMode == "" {
 		opts.MachineOperationMode = machineOperationModeAuto
@@ -80,42 +85,48 @@ func machineOperationReconciler(
 		opts.Log.Debug(
 			"Machina MachineOperation support disabled; using noop machine operation reconciler",
 		)
-		return daemon.NoopMachineOperationReconciler(), nil, nil
+		return machineOperationReconcilerResult{
+			reconciler: daemon.NoopMachineOperationReconciler(),
+			softReboot: noopHostSoftRebootHandler{},
+		}, nil
 	}
 
 	present, err := hasMachineOperationAPI(opts.Client)
 	if err != nil {
-		return nil, nil, err
+		return machineOperationReconcilerResult{}, err
 	}
 	if !present {
 		opts.Log.Debug(
 			"Machina MachineOperation API not found; using noop machine operation reconciler",
 		)
-		return daemon.NoopMachineOperationReconciler(), nil, nil
+		return machineOperationReconcilerResult{
+			reconciler: daemon.NoopMachineOperationReconciler(),
+			softReboot: noopHostSoftRebootHandler{},
+		}, nil
 	}
 	if opts.NodeName == "" {
-		return nil, nil, fmt.Errorf("node name is empty")
+		return machineOperationReconcilerResult{}, fmt.Errorf("node name is empty")
 	}
 	if opts.AKSMachineName == "" {
-		return nil, nil, fmt.Errorf("AKS machine name is empty")
+		return machineOperationReconcilerResult{}, fmt.Errorf("AKS machine name is empty")
 	}
 	if opts.State == nil {
-		return nil, nil, fmt.Errorf("state store is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("state store is nil")
 	}
 	if opts.Config == nil {
-		return nil, nil, fmt.Errorf("config is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("config is nil")
 	}
 	if opts.Uninstall == nil {
-		return nil, nil, fmt.Errorf("uninstall task factory is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("uninstall task factory is nil")
 	}
 	if opts.ClearConfig == nil {
-		return nil, nil, fmt.Errorf("config cleanup task is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("config cleanup task is nil")
 	}
 	if opts.Resolve == nil {
-		return nil, nil, fmt.Errorf("machine goal resolver is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("machine goal resolver is nil")
 	}
 	if opts.Gate == nil {
-		return nil, nil, fmt.Errorf("startup gate is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("startup gate is nil")
 	}
 
 	target := flexHostSoftRebootTarget{machineName: opts.AKSMachineName, nodeName: opts.NodeName}
@@ -123,7 +134,7 @@ func machineOperationReconciler(
 		opts.Client, opts.Reader, opts.Log, target, host, &opts.Gate.stopping,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create HostSoftReboot handler: %w", err)
+		return machineOperationReconcilerResult{}, fmt.Errorf("create HostSoftReboot handler: %w", err)
 	}
 
 	handlers := &machineOperationHandlers{
@@ -154,17 +165,20 @@ func machineOperationReconciler(
 		operationHandlers,
 	)
 	if err != nil {
-		return nil, nil, fmt.Errorf("create MachineOperation reconciler: %w", err)
+		return machineOperationReconcilerResult{}, fmt.Errorf("create MachineOperation reconciler: %w", err)
 	}
 	opts.Log.Info(
 		"Machina MachineOperation API found; enabling machine operation reconciler",
 	)
-	return &flexMachineOperationReconciler{
-		delegate: reconciler,
-		handlers: operationHandlers,
-		reader:   opts.Reader,
-		target:   target,
-	}, softReboot, nil
+	return machineOperationReconcilerResult{
+		reconciler: &flexMachineOperationReconciler{
+			delegate: reconciler,
+			handlers: operationHandlers,
+			reader:   opts.Reader,
+			target:   target,
+		},
+		softReboot: softReboot,
+	}, nil
 }
 
 func hasMachineOperationAPI(c client.Client) (bool, error) {
