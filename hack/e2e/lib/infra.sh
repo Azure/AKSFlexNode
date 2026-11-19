@@ -152,6 +152,9 @@ infra_deploy() {
   fi
 
   # Persist to state
+  state_set "isolation_vm_name"     "$(echo "${outputs}" | jq -r '.isolationVmName.value')"
+  state_set "isolation_vm_ip"       "$(echo "${outputs}" | jq -r '.isolationVmIp.value')"
+  state_set "isolation_vm_private_ip" "$(echo "${outputs}" | jq -r '.isolationVmPrivateIp.value')"
   state_set "cluster_name"          "${cluster_name}"
   state_set "cluster_id"            "${cluster_id}"
   state_set "msi_vm_name"           "${msi_vm_name}"
@@ -199,6 +202,8 @@ infra_deploy() {
   local pid_kubeadm=$!
   wait_for_ssh "${arc_vm_ip}" &
   local pid_arc=$!
+  wait_for_ssh "$(state_get isolation_vm_ip)" &
+  local pid_isolation=$!
 
   local ssh_failed=0
   wait "${pid_msi}" || ssh_failed=1
@@ -206,6 +211,7 @@ infra_deploy() {
   wait "${pid_offline}" || ssh_failed=1
   wait "${pid_kubeadm}" || ssh_failed=1
   wait "${pid_arc}" || ssh_failed=1
+  wait "${pid_isolation}" || ssh_failed=1
 
   if [[ "${ssh_failed}" -eq 1 ]]; then
     log_error "One or more VMs not reachable via SSH"

@@ -292,21 +292,71 @@ EOF
   smoke_test "${vm_name}" "${mode}-${stage}-soft-restart"
 }
 
+_isolation_reboot_exec() {
+  local deadline="$1" vm_ip="$2"
+  shift 2
+  local remaining=$((deadline - SECONDS))
+  (( remaining > 0 )) || return 124
+  if (( remaining > 20 )); then remaining=20; fi
+  local -a ssh_opts
+  _build_ssh_opts ssh_opts
+  # ConnectTimeout does not bound an established SSH session across a reboot.
+  timeout --kill-after=2 "${remaining}s" ssh "${ssh_opts[@]}" "${E2E_SSH_USER}@${vm_ip}" "$@"
+}
+
+_isolation_reboot_diagnostics() {
+  local vm_ip="$1" rc=0
+  log_info "Collecting host reboot diagnostics from ${vm_ip} (timeout: 20s)..."
+  _isolation_reboot_exec "$((SECONDS + 20))" "${vm_ip}" 'sudo bash -s' <<'REMOTE' || rc=$?
+set -uo pipefail
+printf '\n=== Current boot ID ===\n'
+cat /proc/sys/kernel/random/boot_id
+printf '\n=== Systemd jobs ===\n'
+systemctl list-jobs --no-pager
+printf '\n=== Reboot units ===\n'
+systemctl show reboot.target shutdown.target systemd-reboot.service \
+  --property=Id,ActiveState,SubState,Result,Job
+printf '\n=== Recent boots ===\n'
+journalctl --list-boots --no-pager | tail -n 5
+# Restrict journals to systemd events; agent/workload messages can contain credentials.
+for boot in 0 -1; do
+  printf '\n=== Systemd events (boot %s) ===\n' "${boot}"
+  journalctl -b "${boot}" _PID=1 -n 60 --no-pager
+done
+REMOTE
+  if (( rc != 0 )); then
+    log_warn "Host reboot diagnostics unavailable (SSH exit ${rc})"
+  fi
+}
+
 _isolation_host_reboot() {
-  local vm_ip="$1" vm_name="$2" mode="$3" before after
-  before="$(remote_exec "${vm_ip}" 'cat /proc/sys/kernel/random/boot_id')"
-  remote_exec "${vm_ip}" 'sudo systemctl reboot' || true
+  local vm_ip="$1" vm_name="$2" mode="$3" before after="" request_rc=0 remaining
   local deadline=$((SECONDS + E2E_NODE_JOIN_TIMEOUT))
+  if ! before="$(_isolation_reboot_exec "${deadline}" "${vm_ip}" 'cat /proc/sys/kernel/random/boot_id')"; then
+    log_error "Cannot read host boot ID before reboot"
+    _isolation_reboot_diagnostics "${vm_ip}"
+    return 1
+  fi
+  log_info "Rebooting host ${vm_name} (timeout: ${E2E_NODE_JOIN_TIMEOUT}s)..."
+  _isolation_reboot_exec "${deadline}" "${vm_ip}" 'sudo systemctl reboot' || request_rc=$?
+  # SSH may disconnect after systemd accepts the reboot; the boot ID proves success.
+  log_info "Host reboot request SSH exit ${request_rc}; waiting for a changed boot ID"
   while (( SECONDS < deadline )); do
-    if after="$(remote_exec "${vm_ip}" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null)" && [[ -n "${after}" && "${after}" != "${before}" ]]; then
+    if after="$(_isolation_reboot_exec "${deadline}" "${vm_ip}" 'cat /proc/sys/kernel/random/boot_id' 2>/dev/null)" && [[ -n "${after}" && "${after}" != "${before}" ]]; then
+      log_success "Host ${vm_name} rebooted: ${before} -> ${after}"
       _isolation_wait_runtime "${vm_ip}" "${mode}"
       validate_node_joined "${vm_name}"
       smoke_test "${vm_name}" "${mode}-host-reboot"
       return 0
     fi
-    sleep 5
+    remaining=$((deadline - SECONDS))
+    if (( remaining > 0 )); then
+      if (( remaining > 5 )); then remaining=5; fi
+      sleep "${remaining}"
+    fi
   done
-  log_error "Host did not reboot and reconnect"
+  log_error "Host did not reboot and reconnect within ${E2E_NODE_JOIN_TIMEOUT}s (before=${before}, last=${after:-unavailable})"
+  _isolation_reboot_diagnostics "${vm_ip}"
   return 1
 }
 
