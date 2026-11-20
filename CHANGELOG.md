@@ -27,10 +27,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Handle a missing `machines.target` during preflight: warn for native online bootstrap, but fail for offline or containerized bootstrap; masked targets are always fatal.
 - Stop and mask conflicting host kubelet and containerd services during nspawn bootstrap. Containerized agents preserve host containerd because it runs the agent ([#478](https://github.com/Azure/AKSFlexNode/pull/478)).
 
-### Known issues
-
-- Nspawn `AgentReset` can fail when Azure Blob CSI's AZNFS watchdog leaves immutable state files under `/opt/microsoft/aznfs/data` in the worker. The stopped, unmounted guest filesystem then requires manual cleanup before reset can complete.
-
 ## [0.3.0] - 2026-11-04
 
 ### Added
