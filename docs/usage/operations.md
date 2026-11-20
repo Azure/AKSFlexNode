@@ -10,7 +10,8 @@ This guide covers host inspection, current lifecycle operations, reset, and trou
 | Operation | Interface | Current behavior |
 | --- | --- | --- |
 | Kubernetes settings repave | Azure Machine goal plus Kubernetes Node deletion | Provisions the alternate nspawn side and applies the changed settings version. Automatic nspawn rollback isn't implemented. |
-| Node restart | Unbounded `NodeReboot` MachineOperation | Restarts the active nspawn worker and waits for kubelet. |
+| Node restart | Unbounded `NodeReboot` MachineOperation | Restarts the nspawn or OCI worker, or the native kubelet and containerd services; the host OS boot ID stays unchanged. |
+| Host OS reboot | Unbounded `HostSoftReboot` MachineOperation | Requests a systemd reboot of the host OS; the restarted agent reports the result using the recorded host boot ID. |
 | Agent upgrade | Unbounded `AgentUpgrade` MachineOperation or direct candidate activation | Uses blue-green host binaries and restores the last-known-good binary when activation fails. |
 | Agent reset | Unbounded `AgentReset` MachineOperation | Removes local node runtime, marks the operation complete, and stops the daemon. |
 | Local reset | `/opt/unbounded/agent/bin/aks-flex-node reset` or the uninstall script | Removes agent-managed host runtime. Cluster-side Node and Azure Machine cleanup are separate operations. |
@@ -129,9 +130,11 @@ On Azure Container Linux, where support is experimental, see [Azure Container Li
 
 ## Managed node restart and reset
 
-When the Unbounded MachineOperation API is installed, the daemon handles `NodeReboot` and `AgentReset` operations in addition to `AgentUpgrade`.
+When the Unbounded MachineOperation API is installed, the daemon handles `NodeReboot`, `HostSoftReboot`, and `AgentReset` operations in addition to `AgentUpgrade`. These operations target the Flex node's machine reference; they don't require a Machina `Machine` custom resource.
 
-A `NodeReboot` restarts the active nspawn worker. An `AgentReset` removes both nspawn sides, host networking artifacts, local daemon state, and agent-managed runtime directories, publishes the MachineOperation result, and stops the daemon service. Neither operation drains workloads; complete cluster-side disruption orchestration before creating the operation.
+A `NodeReboot` restarts the active nspawn or OCI worker, or the native kubelet and containerd services, without rebooting the host OS. A `HostSoftReboot` requests a systemd reboot of the host OS in every supported deployment, including a containerized agent. Before the request, the agent records `InProgress` and the host boot ID in the operation status. After the agent restarts, it reports `Complete` with reason `Succeeded` if the boot ID changed, or `Failed` with reason `RebootNotObserved` if it didn't. A shutdown cancellation alone leaves the operation `InProgress` for the next start. Unfinished provider or BMC out-of-band host operations take priority; they don't wait for `HostSoftReboot`.
+
+An `AgentReset` removes both nspawn sides, host networking artifacts, local daemon state, and agent-managed runtime directories, publishes the MachineOperation result, and stops the daemon service. None of these operations drains workloads; complete cluster-side disruption orchestration before creating the operation.
 
 These operations use a cluster-scoped API. Restrict who can create MachineOperations and monitor the operation status until it reaches `Complete` or `Failed`.
 

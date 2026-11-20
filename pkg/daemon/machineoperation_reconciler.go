@@ -41,6 +41,12 @@ type machineOperationReconcilerOptions struct {
 	ClearConfig          phases.Task
 	Resolve              machineGoalResolver
 	AgentUpgrade         agentUpgradeExecutor
+	Gate                 *startupGate
+}
+
+type machineOperationReconcilerResult struct {
+	reconciler daemon.MachineOperationRequestReconciler
+	softReboot hostSoftRebootHandler
 }
 
 type machineOperationHandlers struct {
@@ -52,21 +58,25 @@ type machineOperationHandlers struct {
 	uninstall    func(*slog.Logger) phases.Task
 	clearConfig  phases.Task
 	agentUpgrade agentUpgradeExecutor
+	gate         *startupGate
+	softReboot   hostSoftRebootHandler
 }
 
 // machineOperationReconciler runs MachineOperations when the Machina CRD is available.
+// Both returned handlers are no-ops when handling is disabled or the API is absent.
 // TODO: Add a new machineOperationMode value when ARM-backed MachineOperations are supported.
 func machineOperationReconciler(
 	opts machineOperationReconcilerOptions,
-) (daemon.MachineOperationRequestReconciler, error) {
+	host daemon.HostRebooter,
+) (machineOperationReconcilerResult, error) {
 	if opts.Client == nil {
-		return nil, fmt.Errorf("kubernetes client is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("kubernetes client is nil")
 	}
 	if opts.Runtime == nil {
-		return nil, fmt.Errorf("worker runtime is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("worker runtime is nil")
 	}
 	if opts.AgentUpgrade == nil {
-		return nil, fmt.Errorf("agent upgrade executor is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("agent upgrade executor is nil")
 	}
 	if opts.MachineOperationMode == "" {
 		opts.MachineOperationMode = machineOperationModeAuto
@@ -75,39 +85,56 @@ func machineOperationReconciler(
 		opts.Log.Debug(
 			"Machina MachineOperation support disabled; using noop machine operation reconciler",
 		)
-		return daemon.NoopMachineOperationReconciler(), nil
+		return machineOperationReconcilerResult{
+			reconciler: daemon.NoopMachineOperationReconciler(),
+			softReboot: noopHostSoftRebootHandler{},
+		}, nil
 	}
 
 	present, err := hasMachineOperationAPI(opts.Client)
 	if err != nil {
-		return nil, err
+		return machineOperationReconcilerResult{}, err
 	}
 	if !present {
 		opts.Log.Debug(
 			"Machina MachineOperation API not found; using noop machine operation reconciler",
 		)
-		return daemon.NoopMachineOperationReconciler(), nil
+		return machineOperationReconcilerResult{
+			reconciler: daemon.NoopMachineOperationReconciler(),
+			softReboot: noopHostSoftRebootHandler{},
+		}, nil
 	}
 	if opts.NodeName == "" {
-		return nil, fmt.Errorf("node name is empty")
+		return machineOperationReconcilerResult{}, fmt.Errorf("node name is empty")
 	}
 	if opts.AKSMachineName == "" {
-		return nil, fmt.Errorf("AKS machine name is empty")
+		return machineOperationReconcilerResult{}, fmt.Errorf("AKS machine name is empty")
 	}
 	if opts.State == nil {
-		return nil, fmt.Errorf("state store is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("state store is nil")
 	}
 	if opts.Config == nil {
-		return nil, fmt.Errorf("config is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("config is nil")
 	}
 	if opts.Uninstall == nil {
-		return nil, fmt.Errorf("uninstall task factory is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("uninstall task factory is nil")
 	}
 	if opts.ClearConfig == nil {
-		return nil, fmt.Errorf("config cleanup task is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("config cleanup task is nil")
 	}
 	if opts.Resolve == nil {
-		return nil, fmt.Errorf("machine goal resolver is nil")
+		return machineOperationReconcilerResult{}, fmt.Errorf("machine goal resolver is nil")
+	}
+	if opts.Gate == nil {
+		return machineOperationReconcilerResult{}, fmt.Errorf("startup gate is nil")
+	}
+
+	target := flexHostSoftRebootTarget{machineName: opts.AKSMachineName, nodeName: opts.NodeName}
+	softReboot, err := daemon.NewHostSoftRebootHandler(
+		opts.Client, opts.Reader, opts.Log, target, host, &opts.Gate.stopping,
+	)
+	if err != nil {
+		return machineOperationReconcilerResult{}, fmt.Errorf("create HostSoftReboot handler: %w", err)
 	}
 
 	handlers := &machineOperationHandlers{
@@ -119,29 +146,34 @@ func machineOperationReconciler(
 		uninstall:    opts.Uninstall,
 		clearConfig:  opts.ClearConfig,
 		agentUpgrade: opts.AgentUpgrade,
+		gate:         opts.Gate,
+		softReboot:   softReboot,
 	}
-	// Whether an operation is still to run is read from the API server. A handler's own status
-	// update queues another reconcile, which runs as soon as the handler returns, and the cache
-	// can still have the operation in progress then, though the handler has just finished it:
-	// the handler would run again, rebooting the node a second time for one NodeReboot.
+	// A previously queued event or retry can run after an operation finishes.
+	// Read its current status from the API server to avoid replaying the action.
+	operationHandlers := daemon.MachineOperationHandlers{
+		machinav1alpha3.OperationNodeReboot:     handlers.reconcileNodeReboot,
+		machinav1alpha3.OperationAgentUpgrade:   handlers.reconcileAgentUpgrade,
+		machinav1alpha3.OperationAgentReset:     handlers.reconcileAgentReset,
+		machinav1alpha3.OperationHostSoftReboot: handlers.reconcileHostSoftReboot,
+	}
 	reconciler, err := daemon.NewMachinaMachineOperationReconcilerWithReader(
 		opts.Client,
 		opts.Reader,
-		opts.NodeName,
 		opts.AKSMachineName,
-		daemon.MachineOperationHandlers{
-			machinav1alpha3.OperationNodeReboot:   handlers.reconcileNodeReboot,
-			machinav1alpha3.OperationAgentUpgrade: handlers.reconcileAgentUpgrade,
-			machinav1alpha3.OperationAgentReset:   handlers.reconcileAgentReset,
-		},
+		opts.NodeName,
+		operationHandlers,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("create MachineOperation reconciler: %w", err)
+		return machineOperationReconcilerResult{}, fmt.Errorf("create MachineOperation reconciler: %w", err)
 	}
 	opts.Log.Info(
 		"Machina MachineOperation API found; enabling machine operation reconciler",
 	)
-	return reconciler, nil
+	return machineOperationReconcilerResult{
+		reconciler: reconciler,
+		softReboot: softReboot,
+	}, nil
 }
 
 func hasMachineOperationAPI(c client.Client) (bool, error) {
@@ -245,7 +277,11 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 		if errors.Is(err, errAgentUpgradeAlreadyPending) {
 			// Retry a previously failed recovery handoff. An ordinary duplicate
 			// remains a no-op while the delayed daemon restart is pending.
-			return ctrl.Result{}, h.agentUpgrade.RetryRecovery(ctx)
+			recovery, err := h.agentUpgrade.RetryRecovery(ctx)
+			if recovery.RestartScheduled {
+				h.gate.stopping.Store(true)
+			}
+			return ctrl.Result{}, err
 		}
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", err.Error())
 	}
@@ -270,6 +306,7 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 		}
 		return h.finishFailedMachineOperation(ctx, store, op, "ExecutionFailed", "failed to restart upgraded agent daemon")
 	}
+	h.gate.stopping.Store(true)
 	// Restart scheduling is the old daemon's final responsibility. Keep the
 	// operation InProgress and let the restarted or recovery daemon publish the
 	// only terminal result.
@@ -295,6 +332,9 @@ func (h *machineOperationHandlers) beginAgentUpgradeRecovery(
 	restartErr := h.agentUpgrade.Restart(cleanupCtx)
 	if restartErr != nil {
 		h.log.Error("failed to restart daemon for AgentUpgrade recovery", "operation", op.Name, "error", restartErr)
+	}
+	if restartErr == nil {
+		h.gate.stopping.Store(true)
 	}
 	if recordErr != nil || restartErr != nil {
 		return ctrl.Result{}, errors.Join(

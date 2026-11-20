@@ -75,7 +75,7 @@ The default `all` command runs:
 7. Validate node readiness, node-problem-detector status, and run smoke workloads.
 8. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 9. Rejoin all Flex Nodes and validate again.
-10. Validate the installed nspawn lifecycle helper and generated systemd hooks, then reconcile a running node through the helper.
+10. Submit `HostSoftReboot` on each joined nspawn node, then validate the installed nspawn lifecycle helper and generated systemd hooks and reconcile a running node through the helper.
 11. Validate managed agent upgrade, forced rollback, retry, nspawn synchronization, and kubelet authentication.
 12. Reinstall the bootstrap-token node with an earlier release, and validate its upgrade and move into `/opt/unbounded/agent`; see [Host Root Migration Validation](#host-root-migration-validation).
 13. Run controller-machine-driven repave validation after the agent upgrade.
@@ -209,6 +209,10 @@ kubelet configuration applied inside the nspawn machine and asserts the node's
 allocatable CPU, memory, and pod capacity reflect the applied reservations.
 
 Each join path uploads the locally built binary and renders a config file. Fresh hosts install it through `scripts/install.sh` with `AKS_FLEX_NODE_LOCAL_BINARY`; rejoin hosts with an existing managed layout invoke the uploaded candidate's `agent-upgrade` command before bootstrap. The node starts through a transient systemd unit, and the installed agent service is then validated with systemd checks.
+
+## Host reboot validation
+
+The full run submits a `HostSoftReboot` MachineOperation on each nspawn join path and on the separate isolation lane's none and OCI workers. It waits for a new host boot and agent invocation before waiting for completion, checks the recorded target boot ID and success condition, and verifies the worker, Node UID, credentials, applied state, and kubelet configuration survive. A smoke workload checks recovery. The existing worker `NodeReboot` same-host-boot and direct host reboot checks remain in the isolation flow.
 
 ## Agent Upgrade Validation
 
