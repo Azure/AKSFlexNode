@@ -300,7 +300,9 @@ case "${mode}" in
   container) executor=(/opt/unbounded/runtime/runc exec "unbounded-${slot}") ;;
   *) echo "Unknown isolation mode: ${mode}" >&2; exit 1 ;;
 esac
-timeout 20 "${executor[@]}" sh -ec '
+# Keep shell variables out of systemd-run's command-argument expansion.
+timeout 20 "${executor[@]}" sh -s <<'CHECK_NPD'
+  set -eu
   if load_state="$(systemctl show node-problem-detector.service --property=LoadState --value)"; then
     :
   elif [ "${load_state}" != not-found ]; then
@@ -317,7 +319,7 @@ timeout 20 "${executor[@]}" sh -ec '
       exit 1
     fi
   done
-' </dev/null
+CHECK_NPD
 REMOTE
   then
     log_error "Default-disabled NPD validation failed on '${vm_name}'"
