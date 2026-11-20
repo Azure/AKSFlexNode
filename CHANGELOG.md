@@ -6,14 +6,18 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-11-20
+
 ### Added
 
 - Add worker isolation modes: `none` runs kubelet and containerd on the host; experimental `container` runs them in an OCI worker and requires `bootstrap.experimental.containerIsolation: true`. Both require a host-installed agent, and changing modes requires reset/bootstrap ([#454](https://github.com/Azure/AKSFlexNode/pull/454), [#455](https://github.com/Azure/AKSFlexNode/pull/455)).
 - Disconnect tolerance: when AKS enables it for a node, the agent downloads and runs OpenYurt YurtHub in the worker and routes kubelet through it, so workloads keep running while the node is disconnected from the API server. Enabling it requires outbound HTTPS to `packages.microsoft.com`; joining does not. State is reported as a `DisconnectTolerance` Node condition on every node; with paired agent and kubelet kubeconfigs, grant the agent principal `patch` on its own `nodes/status` ([#390](https://github.com/Azure/AKSFlexNode/pull/390), [#391](https://github.com/Azure/AKSFlexNode/pull/391), [#392](https://github.com/Azure/AKSFlexNode/pull/392)).
 - `agent.machineClient.apiVersion` overrides the ARM Machine API version ([#390](https://github.com/Azure/AKSFlexNode/pull/390)).
+- Add agent-managed `HostSoftReboot` MachineOperations. The agent records the host boot ID before requesting a systemd reboot and reports completion after startup confirms a changed boot ID ([#465](https://github.com/Azure/AKSFlexNode/pull/465)).
 
 ### Changed
 
+- Update the embedded Unbounded SDK to `v0.27.0` ([#479](https://github.com/Azure/AKSFlexNode/pull/479)).
 - Refresh supplemental networking, offline-artifact, and NVIDIA GPU labs for AKS Flex Node `v0.3.0` and Unbounded `v0.21.0`, with recorded validation scopes. Correct offline agent staging, ARM egress, Gantry's loopback port conflict, and WireGuard host-port syntax.
 
 ### Fixed
@@ -21,6 +25,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 - Create missing bootstrap host-root directories with traversable permissions under a private umask, without changing existing directories or credential-file permissions.
 - Start enabled nspawn workers after reboot by making the daemon unit pull in `machines.target`.
 - Handle a missing `machines.target` during preflight: warn for native online bootstrap, but fail for offline or containerized bootstrap; masked targets are always fatal.
+- Stop and mask conflicting host kubelet and containerd services during nspawn bootstrap. Containerized agents preserve host containerd because it runs the agent ([#478](https://github.com/Azure/AKSFlexNode/pull/478)).
 
 ## [0.3.0] - 2026-11-04
 
@@ -59,6 +64,7 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Made release publishing safe to rerun for an existing tag ([#304](https://github.com/Azure/AKSFlexNode/pull/304)).
 
-[Unreleased]: https://github.com/Azure/AKSFlexNode/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/Azure/AKSFlexNode/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/Azure/AKSFlexNode/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/Azure/AKSFlexNode/compare/v0.2.0...v0.3.0
 [0.2.0]: https://github.com/Azure/AKSFlexNode/compare/v0.1.11...v0.2.0
