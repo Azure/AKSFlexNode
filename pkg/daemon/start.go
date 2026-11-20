@@ -24,11 +24,19 @@ func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.
 		tasks = append(tasks, host.InstallPackagesFor(log, cfg.Bootstrap.Isolation))
 	}
 	mode := cfg.Bootstrap.Isolation
-	if mode == isolation.ModeContainer {
+	switch mode {
+	case isolation.ModeContainer:
 		tasks = append(tasks,
 			noneops.LoadKernelModules(log, nil),
 			phases.Parallel(log, host.DisableContainerd(log), host.DisableKubelet(log)),
 		)
+	case isolation.ModeNSpawn:
+		services := []phases.Task{host.DisableKubelet(log)}
+		// Host containerd runs the containerized agent and must remain active.
+		if !containerized {
+			services = append(services, host.DisableContainerd(log))
+		}
+		tasks = append(tasks, phases.Parallel(log, services...))
 	}
 
 	nftables := host.ConfigureNFTables(log)
