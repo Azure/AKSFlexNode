@@ -49,7 +49,7 @@ Current host-side responsibilities include:
 
 - Install and configure OS prerequisites.
 - Prepare nspawn workspace under `/var/lib/machines`.
-- Download and install Kubernetes, CRI, CNI, runc, containerd, and node-problem-detector artifacts.
+- Download and install Kubernetes, CRI, CNI, runc, containerd, and optionally node-problem-detector artifacts.
 - Render containerd, kubelet, CNI, and systemd configuration.
 - Start the active nspawn-backed worker.
 - Install and start `aks-flex-node-agent.service`.
@@ -99,7 +99,7 @@ The agent reads a JSON config file with these top-level sections:
 - `hostRouting` - optional static IPv4 routes and route-overlap checks.
 - `networking` - DNS service IP, CNI version, and AKS LocalDNS profile.
 - `node` - kubelet settings, labels, taints, maximum pods, and node IP.
-- `npd` - Node Problem Detector version.
+- `npd` - Node Problem Detector opt-in and version.
 
 At most one durable Azure authentication mode must be configured: managed identity, Azure Arc, or service principal. A Kubernetes bootstrap token can be combined with that identity for kubelet TLS bootstrap. Alternatively, paired embedded agent and kubelet kubeconfigs configure renewable Kubernetes credentials separately. The identities can be the same or separate, but kubelet must use the node's system-assigned managed identity (SAMI); Arc can remain responsible for ARM access without requiring Kubernetes bootstrap data.
 

@@ -38,7 +38,7 @@ type startTask struct {
 // Start renders NPD through root and manages it through the node's executor.
 // Mode selects the executable path visible to that executor, not the agent.
 func Start(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot, nodeStart *goalstates.NodeStart, mode isolation.Mode) phases.Task {
-	if disabledForOfflineArtifacts(cfg) {
+	if !cfg.Npd.Enabled || disabledForOfflineArtifacts(cfg) {
 		return disabledTask{name: "start-npd", log: log}
 	}
 

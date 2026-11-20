@@ -28,7 +28,7 @@ func TestConstructDownloadSource(t *testing.T) {
 func TestPreflight(t *testing.T) {
 	t.Parallel()
 
-	checks := Preflight(&config.Config{Npd: config.NPDConfig{Version: "v1.2.3"}})
+	checks := Preflight(&config.Config{Npd: config.NPDConfig{Enabled: true, Version: "v1.2.3"}})
 	if len(checks) != 1 {
 		t.Fatalf("Preflight() returned %d checks, want 1", len(checks))
 	}
@@ -41,6 +41,7 @@ func TestOfflineArtifactsDisableNPD(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{
+		Npd: config.NPDConfig{Enabled: true},
 		Bootstrap: config.BootstrapConfig{
 			OfflineArtifacts: config.OfflineArtifactsConfig{Source: "file:///opt/artifacts/{{ .KubernetesVersion }}"},
 		},

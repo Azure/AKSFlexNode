@@ -25,7 +25,7 @@ aks-flex-node preflight --config /etc/aks-flex-node/config.json
 | `hostRouting` | object | Optional host IPv4 routes and route-overlap checks applied before the nspawn worker starts. |
 | `networking` | object | Cluster networking settings and optional CNI plugin version override. |
 | `node` | object | Kubelet, labels, taints, and node registration settings. |
-| `npd` | object | Optional node-problem-detector version override. |
+| `npd` | object | Optional Node Problem Detector enablement and version override. Disabled by default. |
 
 ## Azure
 
@@ -501,7 +501,8 @@ create the Node.
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
-| `npd.version` | string | Optional node-problem-detector version override. NPD is temporarily disabled when `bootstrap.offlineArtifacts.source` is configured; preflight reports this as a warning until NPD is included in upstream Unbounded bootstrap artifacts. | `v1.35.1` |
+| `npd.enabled` | boolean | Opt in to downloading and starting Flex-managed Node Problem Detector. Defaults to `false`. When enabled, NPD is still skipped if `bootstrap.offlineArtifacts.source` is configured; preflight reports a warning until NPD is included in upstream Unbounded bootstrap artifacts. | `false` |
+| `npd.version` | string | Optional node-problem-detector version override, used when `npd.enabled` is `true`. Defaults to `v1.35.1`. | `v1.35.1` |
 
 ## Legacy Config Compatibility
 
@@ -660,6 +661,7 @@ Add these sections when you need to pin runtime component versions explicitly.
     "cniVersion": "v1.6.2"
   },
   "npd": {
+    "enabled": false,
     "version": "v1.35.1"
   }
 }
