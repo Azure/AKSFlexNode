@@ -184,7 +184,7 @@ This keeps scheduling and disruption decisions outside the agent. AKS RP, an ope
 5. Download or stage required artifacts and provision the alternate rootfs.
 6. Apply AKS-specific configuration and install the agent binary in the alternate rootfs.
 7. Start the alternate side and wait for kubelet to become active.
-8. Start Node Problem Detector when `npd.enabled` is `true`.
+8. Start Node Problem Detector.
 9. Persist the new applied state and active side.
 10. Clean up the old side's nspawn artifacts.
 

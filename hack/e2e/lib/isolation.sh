@@ -565,7 +565,6 @@ isolation_all() {
     node_join_token "" "${mode}"
     _isolation_wait_runtime "${vm_ip}" "${mode}"
     validate_node_joined "${vm_name}"
-    validate_npd_disabled "${vm_name}" "${vm_ip}"
     validate_node_ip "${vm_name}" "$(state_get token_vm_private_ip)"
     smoke_test "${vm_name}" "${mode}-join"
     _isolation_reapply_and_restart "${vm_ip}" "${vm_name}" "${mode}" pre-repave
@@ -579,7 +578,6 @@ isolation_all() {
     node_join_token "" "${mode}"
     _isolation_wait_runtime "${vm_ip}" "${mode}"
     validate_node_joined "${vm_name}"
-    validate_npd_disabled "${vm_name}" "${vm_ip}"
     smoke_test "${vm_name}" "${mode}-rejoin"
     node_unjoin_token
     _isolation_assert_clean "${vm_ip}" "${mode}"
@@ -588,5 +586,4 @@ isolation_all() {
   # Preserve the normal runner's final nspawn deployment for log collection.
   node_join_token
   validate_node_joined "${vm_name}"
-  validate_npd_disabled "${vm_name}" "${vm_ip}"
 }
