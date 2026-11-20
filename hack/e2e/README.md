@@ -72,7 +72,7 @@ The default `all` command runs:
 4. Deploy a local registry in `kube-system`, build and push the `aks-flex-controller` image to that registry, then deploy the controller in `kube-system`.
 5. Reuse the MSI VM to verify that `EnsureMachine` registers a missing Machine through ARM, then reset the host.
 6. Join all provisioned Flex Node VMs through the existing controller-backed lifecycle paths.
-7. Validate node readiness, node-problem-detector status, and run smoke workloads.
+7. Validate node readiness and run smoke workloads. Verify NPD is absent by default on MSI, token, offline, and Arc nodes; the existing kubeadm node explicitly enables NPD and verifies its active service and `KernelDeadlock=False` condition. None and OCI isolation joins also verify NPD is absent by default.
 8. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 9. Rejoin all Flex Nodes and validate again.
 10. Submit `HostSoftReboot` on each joined nspawn node, then validate the installed nspawn lifecycle helper and generated systemd hooks and reconcile a running node through the helper.
@@ -102,7 +102,7 @@ The default `all` command runs:
 | `unjoin-offline` | Unjoin only the offline-artifacts node. |
 | `unjoin-kubeadm` | Unjoin only the kubeadm-style node. |
 | `unjoin-arc` | Unjoin the Arc-backed node while preserving its external Arc connection. |
-| `validate` | Verify joined nodes, node-problem-detector status, and run smoke tests. |
+| `validate` | Verify joined nodes, NPD default-disabled and explicit-opt-in behavior, and run smoke tests. |
 | `validate-absent` | Verify Flex Node objects are absent after unjoin. |
 | `smoke` | Run smoke workloads only. |
 | `nspawn-lifecycle` | Validate lifecycle helper installation and generated hooks on all nodes, then regenerate config and restart the token node through lifecycle reconciliation. |

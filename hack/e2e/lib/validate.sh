@@ -8,6 +8,7 @@
 #   validate_kubelet_reservations <vm_name> <vm_ip> [max_pods] [system_cpu] [system_memory] [kube_cpu] [kube_memory]
 #                                     - Verify the applied kubelet reservation config
 #   validate_npd_status   <vm_name> <vm_ip> - Verify node-problem-detector is active
+#   validate_npd_disabled <vm_name> <vm_ip> - Verify default-disabled NPD has no unit or artifacts
 #   validate_localdns_status <vm_name> <vm_ip> - Verify LocalDNS behavior
 #   validate_localdns_after_reboot <vm_name> <vm_ip> - Verify LocalDNS after nspawn reboot
 #   validate_node_absent  <vm_name>  - Wait for a node to disappear from kubectl
@@ -280,6 +281,53 @@ validate_kubelet_reservations() {
 }
 
 # ---------------------------------------------------------------------------
+# validate_npd_disabled - Verify NPD is not installed in the active worker
+# ---------------------------------------------------------------------------
+validate_npd_disabled() {
+  local vm_name="$1" vm_ip="$2"
+  log_info "Validating node-problem-detector is disabled on '${vm_name}'..."
+
+  if ! remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
+set -euo pipefail
+jq -e '.npd.enabled != true' /etc/aks-flex-node/config.json >/dev/null
+mode="$(jq -er '.isolation // "nspawn"' /etc/aks-flex-node/daemon-state.json)"
+slot="$(jq -er '.activeMachine' /etc/aks-flex-node/daemon-state.json)"
+case "${slot}" in kube1|kube2) ;; *) echo 'Invalid active worker slot' >&2; exit 1 ;; esac
+executor=()
+case "${mode}" in
+  none) ;;
+  nspawn) executor=(systemd-run --machine="${slot}" --quiet --pipe --wait) ;;
+  container) executor=(/opt/unbounded/runtime/runc exec "unbounded-${slot}") ;;
+  *) echo "Unknown isolation mode: ${mode}" >&2; exit 1 ;;
+esac
+timeout 20 "${executor[@]}" sh -ec '
+  if load_state="$(systemctl show node-problem-detector.service --property=LoadState --value)"; then
+    :
+  elif [ "${load_state}" != not-found ]; then
+    echo "Cannot inspect node-problem-detector.service" >&2
+    exit 1
+  fi
+  if [ "${load_state}" != not-found ]; then
+    echo "Unexpected NPD unit: LoadState=${load_state}" >&2
+    exit 1
+  fi
+  for path in /etc/systemd/system/node-problem-detector.service /opt/aks-flex-node/bin/node-problem-detector /etc/node-problem-detector/kernel-monitor.json; do
+    if test -e "${path}" || test -L "${path}"; then
+      echo "Unexpected NPD artifact: ${path}" >&2
+      exit 1
+    fi
+  done
+' </dev/null
+REMOTE
+  then
+    log_error "Default-disabled NPD validation failed on '${vm_name}'"
+    return 1
+  fi
+
+  log_success "node-problem-detector is disabled with no unit or artifacts on '${vm_name}'"
+}
+
+# ---------------------------------------------------------------------------
 # validate_npd_status - Ensure node-problem-detector is active and reporting
 # ---------------------------------------------------------------------------
 validate_npd_status() {
@@ -533,7 +581,7 @@ validate_all_nodes() {
     "${E2E_KUBELET_MAX_PODS}" \
     "${E2E_KUBELET_SYSTEM_RESERVED_CPU}" "${E2E_KUBELET_SYSTEM_RESERVED_MEMORY}" \
     "${E2E_KUBELET_KUBE_RESERVED_CPU}" "${E2E_KUBELET_KUBE_RESERVED_MEMORY}" || failed=1
-  validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
+  validate_npd_disabled "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_localdns_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   if [[ "${_E2E_LOCALDNS_REBOOT_VALIDATED}" != "1" ]]; then
     if validate_localdns_after_reboot "${msi_vm_name}" "${msi_vm_ip}"; then
@@ -542,12 +590,10 @@ validate_all_nodes() {
       failed=1
     fi
   fi
-  validate_npd_status "${token_vm_name}" "${token_vm_ip}" || failed=1
-  # TODO: re-enable once NPD is included in the upstream Unbounded bootstrap
-  # artifact bundle and resolver used by offline artifact mode.
-  log_info "Skipping node-problem-detector validation on offline node '${offline_vm_name}'"
+  validate_npd_disabled "${token_vm_name}" "${token_vm_ip}" || failed=1
+  validate_npd_disabled "${offline_vm_name}" "${offline_vm_ip}" || failed=1
   validate_npd_status "${kubeadm_vm_name}" "${kubeadm_vm_ip}" || failed=1
-  validate_npd_status "${arc_vm_name}" "${arc_vm_ip}" || failed=1
+  validate_npd_disabled "${arc_vm_name}" "${arc_vm_ip}" || failed=1
 
   if [[ "${failed}" -eq 1 ]]; then
     log_error "One or more nodes failed to join"
