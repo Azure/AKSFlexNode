@@ -24,8 +24,12 @@ func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.
 		tasks = append(tasks, host.InstallPackagesFor(log, cfg.Bootstrap.Isolation))
 	}
 	mode := cfg.Bootstrap.Isolation
+	nftables := host.ConfigureNFTables(log)
+	apt := host.HardenAPT(log)
 	switch mode {
 	case isolation.ModeContainer:
+		nftables = host.ConfigureNFTablesFor(log, mode)
+		apt = host.RemoveAPTHardening(log)
 		tasks = append(tasks,
 			noneops.LoadKernelModules(log, nil),
 			phases.Parallel(log, host.DisableContainerd(log), host.DisableKubelet(log)),
@@ -37,13 +41,6 @@ func setupHost(cfg *config.Config, log *slog.Logger, containerized bool) phases.
 			services = append(services, host.DisableContainerd(log))
 		}
 		tasks = append(tasks, phases.Parallel(log, services...))
-	}
-
-	nftables := host.ConfigureNFTables(log)
-	apt := host.HardenAPT(log)
-	if mode == isolation.ModeContainer {
-		nftables = host.ConfigureNFTablesFor(log, mode)
-		apt = host.RemoveAPTHardening(log)
 	}
 
 	tasks = append(tasks, phases.Parallel(log,
