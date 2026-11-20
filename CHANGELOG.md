@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Disable Flex-managed Node Problem Detector installation and startup by default. Set `npd.enabled: true` to opt in.
+
 ## [0.4.0] - 2026-11-20
 
 ### Added

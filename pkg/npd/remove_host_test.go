@@ -19,7 +19,7 @@ import (
 func renderHostUnit(t *testing.T, root none.Root) string {
 	t.Helper()
 
-	start, ok := Start(slog.New(slog.DiscardHandler), &config.Config{}, root, &goalstates.NodeStart{
+	start, ok := Start(slog.New(slog.DiscardHandler), &config.Config{Npd: config.NPDConfig{Enabled: true}}, root, &goalstates.NodeStart{
 		NodeName: "worker-1",
 		Kubelet: goalstates.Kubelet{
 			APIServer: "https://example.test:443",

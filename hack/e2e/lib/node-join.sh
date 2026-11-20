@@ -34,6 +34,12 @@ _deploy_and_start_agent() {
   local unit_name="$3"
   local release="${4:-}"
 
+  # The suite validates NPD readiness, so enable it explicitly.
+  local npd_config_file
+  npd_config_file="$(mktemp "${config_file}.npd.XXXXXX")"
+  jq '.npd.enabled = true' "${config_file}" > "${npd_config_file}"
+  mv "${npd_config_file}" "${config_file}"
+
   log_info "Uploading binary and config to ${vm_ip}..."
   remote_copy "${E2E_BINARY}" "${vm_ip}" "/tmp/aks-flex-node-binary"
   remote_copy "${config_file}" "${vm_ip}" "/tmp/config.json"

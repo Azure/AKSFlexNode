@@ -326,6 +326,7 @@ type NetworkingConfig struct {
 
 // NPDConfig holds configuration settings for the Node Problem Detector (NPD).
 type NPDConfig struct {
+	Enabled bool   `json:"enabled"`
 	Version string `json:"version"`
 }
 

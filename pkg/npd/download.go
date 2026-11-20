@@ -37,7 +37,7 @@ type disabledTask struct {
 
 func (t disabledTask) Name() string { return t.name }
 func (t disabledTask) Do(context.Context) error {
-	t.log.Info(t.name + " is disabled in offline mode")
+	t.log.Info(t.name + " is disabled")
 	return nil
 }
 
@@ -61,7 +61,7 @@ type downloadTask struct {
 // Download installs the node-problem-detector binary and config from the
 // upstream GitHub release tarball into the node's filesystem.
 func Download(log *slog.Logger, cfg *config.Config, root isolation.NodeRoot) phases.Task {
-	if disabledForOfflineArtifacts(cfg) {
+	if !cfg.Npd.Enabled || disabledForOfflineArtifacts(cfg) {
 		return disabledTask{name: "download-npd", log: log}
 	}
 
@@ -127,6 +127,9 @@ func disabledForOfflineArtifacts(cfg *config.Config) bool {
 
 // Preflight returns AKS Flex Node-specific preflight checks.
 func Preflight(cfg *config.Config) []preflight.Checker {
+	if cfg == nil || !cfg.Npd.Enabled {
+		return nil
+	}
 	if disabledForOfflineArtifacts(cfg) {
 		return []preflight.Checker{disabledPreflightCheck{}}
 	}
@@ -139,7 +142,7 @@ func Preflight(cfg *config.Config) []preflight.Checker {
 			ErrMessage: "node-problem-detector artifact is not reachable",
 			Sources: func() (artifactsource.Sources, error) {
 				version := DefaultVersion
-				if cfg != nil && cfg.Npd.Version != "" {
+				if cfg.Npd.Version != "" {
 					version = cfg.Npd.Version
 				}
 
