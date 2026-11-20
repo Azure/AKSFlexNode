@@ -16,11 +16,11 @@ func TestRetryAgentUpgradeRecoveryReportsScheduledRestart(t *testing.T) {
 	t.Parallel()
 
 	tests := map[string]struct {
-		signal     *UpgradeSignal
-		restartErr error
-		want       bool
-		wantErr    bool
-		calls      int
+		signal        *UpgradeSignal
+		restartErr    error
+		wantScheduled bool
+		wantErr       bool
+		calls         int
 	}{
 		"no signal": {},
 		"ordinary pending upgrade": {
@@ -33,8 +33,8 @@ func TestRetryAgentUpgradeRecoveryReportsScheduledRestart(t *testing.T) {
 				OperationName:    "upgrade",
 				RecoveryRequired: true,
 			},
-			want:  true,
-			calls: 1,
+			wantScheduled: true,
+			calls:         1,
 		},
 		"restart failed": {
 			signal: &UpgradeSignal{
@@ -63,8 +63,8 @@ func TestRetryAgentUpgradeRecoveryReportsScheduledRestart(t *testing.T) {
 			}
 
 			got, err := retryAgentUpgradeRecovery(t.Context(), signals, restart)
-			if got != tc.want {
-				t.Fatalf("scheduled = %v, want %v", got, tc.want)
+			if got.RestartScheduled != tc.wantScheduled {
+				t.Fatalf("restart scheduled = %v, want %v", got.RestartScheduled, tc.wantScheduled)
 			}
 			if (err != nil) != tc.wantErr {
 				t.Fatalf("error = %v, want error %v", err, tc.wantErr)

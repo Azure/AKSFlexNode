@@ -29,11 +29,16 @@ type UpgradeRequest struct {
 	SHA256      string
 }
 
+// RecoveryRetryResult reports whether upgrade recovery scheduled a daemon restart.
+type RecoveryRetryResult struct {
+	RestartScheduled bool
+}
+
 // UpgradeExecutor performs deployment mechanics; daemon owns state and result publication.
 type UpgradeExecutor interface {
 	Acquire() (io.Closer, error)
 	Validate(UpgradeRequest) error
-	RetryRecovery(context.Context) (bool, error)
+	RetryRecovery(context.Context) (RecoveryRetryResult, error)
 	RecordFailure(string) error
 	Stage(context.Context, UpgradeRequest) error
 	Abort(context.Context) error
@@ -110,24 +115,24 @@ func (e *HostUpgrade) Validate(request UpgradeRequest) error {
 	return err
 }
 
-func (e *HostUpgrade) RetryRecovery(ctx context.Context) (bool, error) {
+func (e *HostUpgrade) RetryRecovery(ctx context.Context) (RecoveryRetryResult, error) {
 	return retryAgentUpgradeRecovery(ctx, e.signals, e.Restart)
 }
 
-func retryAgentUpgradeRecovery(ctx context.Context, signals UpgradeSignalStore, restart func(context.Context) error) (bool, error) {
+func retryAgentUpgradeRecovery(ctx context.Context, signals UpgradeSignalStore, restart func(context.Context) error) (RecoveryRetryResult, error) {
 	signal, err := signals.Read()
 	if err != nil {
-		return false, err
+		return RecoveryRetryResult{}, err
 	}
 	if signal == nil || !signal.RecoveryRequired {
-		return false, nil
+		return RecoveryRetryResult{}, nil
 	}
 	cleanupCtx, cancel := UpgradeCleanupContext(ctx)
 	defer cancel()
 	if err := restart(cleanupCtx); err != nil {
-		return false, fmt.Errorf("retry AgentUpgrade recovery restart: %w", err)
+		return RecoveryRetryResult{}, fmt.Errorf("retry AgentUpgrade recovery restart: %w", err)
 	}
-	return true, nil
+	return RecoveryRetryResult{RestartScheduled: true}, nil
 }
 
 func (e *HostUpgrade) RecordFailure(message string) error {

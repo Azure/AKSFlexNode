@@ -59,7 +59,7 @@ type agentUpgradeExecutor interface {
 	Acquire() (io.Closer, error)
 	Validate(agentdeployment.UpgradeRequest) error
 	RecordPending(context.Context, string) error
-	RetryRecovery(context.Context) (bool, error)
+	RetryRecovery(context.Context) (agentdeployment.RecoveryRetryResult, error)
 	RecordFailure(string) error
 	Stage(context.Context, agentdeployment.UpgradeRequest) error
 	Abort(context.Context) error

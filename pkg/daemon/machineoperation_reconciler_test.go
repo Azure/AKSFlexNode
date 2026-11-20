@@ -775,12 +775,12 @@ func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) error 
 	return f.pendingErr
 }
 
-func (f *fakeAgentUpgradeExecutor) RetryRecovery(context.Context) (bool, error) {
+func (f *fakeAgentUpgradeExecutor) RetryRecovery(context.Context) (agentdeployment.RecoveryRetryResult, error) {
 	if !f.recovering {
-		return false, nil
+		return agentdeployment.RecoveryRetryResult{}, nil
 	}
 	f.restarted = true
-	return f.restartErr == nil, f.restartErr
+	return agentdeployment.RecoveryRetryResult{RestartScheduled: f.restartErr == nil}, f.restartErr
 }
 
 func (f *fakeAgentUpgradeExecutor) RecordFailure(message string) error {

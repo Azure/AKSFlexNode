@@ -277,8 +277,8 @@ func (h *machineOperationHandlers) reconcileAgentUpgrade(
 		if errors.Is(err, errAgentUpgradeAlreadyPending) {
 			// Retry a previously failed recovery handoff. An ordinary duplicate
 			// remains a no-op while the delayed daemon restart is pending.
-			restarted, err := h.agentUpgrade.RetryRecovery(ctx)
-			if restarted {
+			recovery, err := h.agentUpgrade.RetryRecovery(ctx)
+			if recovery.RestartScheduled {
 				h.gate.stopping.Store(true)
 			}
 			return ctrl.Result{}, err
