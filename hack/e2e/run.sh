@@ -8,7 +8,7 @@
 # Commands:
 #   all           Run the full E2E flow (default): build, infra, CNI, controller,
 #                 ARM registration, join/validate/smoke, unjoin/absence,
-#                 rejoin/validate/smoke, nspawn lifecycle, agent upgrade,
+#                 rejoin/validate/smoke, host soft reboot, nspawn lifecycle, agent upgrade,
 #                 host root migration, upgrade drift, worker isolation, logs, and cleanup
 #   infra         Deploy infrastructure, CNI, and controller (AKS + 6 VMs)
 #   arm-registration Validate MSI-based registration through the ARM Machine API
@@ -292,6 +292,9 @@ cmd_lifecycle_e2e() {
   # Validate + smoke tests (second pass)
   validate_all_nodes
   smoke_test_all || exit_code=1
+
+  # ── Host reboot through MachineOperation on each nspawn join path ─────
+  host_soft_reboot_all
 
   # ── Host nspawn lifecycle restart ──────────────────────────────────────
   nspawn_lifecycle_all

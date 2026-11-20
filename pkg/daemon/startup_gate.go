@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/builder"
@@ -11,8 +12,9 @@ import (
 )
 
 type startupGate struct {
-	ready chan struct{}
-	once  sync.Once
+	ready    chan struct{}
+	once     sync.Once
+	stopping atomic.Bool
 }
 
 func newStartupGate() *startupGate {
@@ -45,6 +47,11 @@ func (r gatedMachineOperationReconciler) ReconcileMachineOperation(ctx context.C
 	if err := r.gate.wait(ctx); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	if r.gate.stopping.Load() {
+		return ctrl.Result{}, nil
+	}
+
 	return r.delegate.ReconcileMachineOperation(ctx, name)
 }
 
@@ -61,5 +68,10 @@ func (r gatedRepaveReconciler) ReconcileRepave(ctx context.Context, source strin
 	if err := r.gate.wait(ctx); err != nil {
 		return ctrl.Result{}, err
 	}
+
+	if r.gate.stopping.Load() {
+		return ctrl.Result{}, nil
+	}
+
 	return r.delegate.ReconcileRepave(ctx, source)
 }

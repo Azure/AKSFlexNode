@@ -193,7 +193,7 @@ func agentUpgradeImage(request UpgradeRequest) (string, error) {
 	return repository + "@sha256:" + digest, nil
 }
 
-func (e *ContainerUpgrade) RetryRecovery(ctx context.Context) error {
+func (e *ContainerUpgrade) RetryRecovery(ctx context.Context) (RecoveryRetryResult, error) {
 	return retryAgentUpgradeRecovery(ctx, e.signals, e.Restart)
 }
 

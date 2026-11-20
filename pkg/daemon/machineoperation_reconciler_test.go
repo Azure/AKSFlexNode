@@ -12,6 +12,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/runtime/schema"
+	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 
@@ -67,7 +68,7 @@ func TestHasMachineOperationAPI(t *testing.T) {
 func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 	t.Parallel()
 
-	reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
+	result, err := machineOperationReconciler(machineOperationReconcilerOptions{
 		Client: fake.NewClientBuilder().WithRESTMapper(
 			errorRESTMapper{err: errors.New("boom")},
 		).Build(),
@@ -75,12 +76,32 @@ func TestMachineOperationReconcilerDisableModeSkipsDiscovery(t *testing.T) {
 		MachineOperationMode: machineOperationModeDisable,
 		Runtime:              &fakeWorkerRuntime{},
 		AgentUpgrade:         &fakeAgentUpgradeExecutor{},
-	})
+	}, &fakeHostRebooter{})
 	if err != nil {
 		t.Fatalf("machineOperationReconciler: %v", err)
 	}
-	if reconciler == nil {
+	if result.reconciler == nil {
 		t.Fatal("machineOperationReconciler returned nil")
+	}
+	if err := result.softReboot.PublishStartup(t.Context()); err != nil {
+		t.Fatalf("disabled MachineOperations startup: %v", err)
+	}
+}
+
+func TestMachineOperationReconcilerAbsentAPISkipsHostReboots(t *testing.T) {
+	t.Parallel()
+
+	result, err := machineOperationReconciler(machineOperationReconcilerOptions{
+		Client:       fake.NewClientBuilder().WithRESTMapper(meta.NewDefaultRESTMapper(nil)).Build(),
+		Log:          discardLogger(),
+		Runtime:      &fakeWorkerRuntime{},
+		AgentUpgrade: &fakeAgentUpgradeExecutor{},
+	}, &fakeHostRebooter{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := result.softReboot.PublishStartup(t.Context()); err != nil {
+		t.Fatalf("startup without MachineOperation API: %v", err)
 	}
 }
 
@@ -120,7 +141,7 @@ func TestMachineOperationReconcilerRequiresDependencies(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 
-			_, err := machineOperationReconciler(tt.opts)
+			_, err := machineOperationReconciler(tt.opts, &fakeHostRebooter{})
 			if err == nil {
 				t.Fatal("machineOperationReconciler error = nil, want error")
 			}
@@ -162,7 +183,7 @@ func TestMachineOperationReconcilerEnabledRequiresNames(t *testing.T) {
 				AKSMachineName: tt.aksMachineName,
 				Runtime:        &fakeWorkerRuntime{},
 				AgentUpgrade:   &fakeAgentUpgradeExecutor{},
-			})
+			}, &fakeHostRebooter{})
 			if err == nil {
 				t.Fatal("machineOperationReconciler error = nil, want error")
 			}
@@ -321,7 +342,12 @@ func TestMachineOperationHandlersAgentUpgrade(t *testing.T) {
 
 	upgrader := &fakeAgentUpgradeExecutor{}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{
+		log:          slog.Default(),
+		runtime:      &fakeWorkerRuntime{},
+		agentUpgrade: upgrader,
+		gate:         newStartupGate(),
+	}
 	digest := strings.Repeat("a", 64)
 	op := daemon.MachineOperation{
 		Name: "upgrade-1",
@@ -340,6 +366,9 @@ func TestMachineOperationHandlersAgentUpgrade(t *testing.T) {
 	}
 	if store.result.Phase != "" {
 		t.Fatalf("phase = %s, want non-terminal until daemon restart", store.result.Phase)
+	}
+	if !target.gate.stopping.Load() {
+		t.Fatal("scheduled upgrade did not defer later operations")
 	}
 }
 
@@ -418,7 +447,12 @@ func TestMachineOperationHandlersAgentUpgradeDuplicateReconcileIsNoop(t *testing
 
 	upgrader := &fakeAgentUpgradeExecutor{pendingErr: errAgentUpgradeAlreadyPending}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{
+		log:          slog.Default(),
+		runtime:      &fakeWorkerRuntime{},
+		agentUpgrade: upgrader,
+		gate:         newStartupGate(),
+	}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
 		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
@@ -429,6 +463,9 @@ func TestMachineOperationHandlersAgentUpgradeDuplicateReconcileIsNoop(t *testing
 	}
 	if upgrader.staged || upgrader.restarted || upgrader.aborted {
 		t.Fatal("duplicate reconciliation executed upgrade actions")
+	}
+	if target.gate.stopping.Load() {
+		t.Fatal("duplicate without a scheduled restart stopped admission")
 	}
 	if store.result.Phase != "" {
 		t.Fatalf("duplicate reconciliation produced terminal phase %s", store.result.Phase)
@@ -510,7 +547,12 @@ func TestMachineOperationHandlersAgentUpgradeAbortFailureStartsRecovery(t *testi
 		abortErr: errors.New("rollback failed"),
 	}
 	store := &fakeMachineOperationStore{}
-	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
+	target := &machineOperationHandlers{
+		log:          slog.Default(),
+		runtime:      &fakeWorkerRuntime{},
+		agentUpgrade: upgrader,
+		gate:         newStartupGate(),
+	}
 	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
 		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
 		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
@@ -527,6 +569,50 @@ func TestMachineOperationHandlersAgentUpgradeAbortFailureStartsRecovery(t *testi
 	}
 }
 
+func TestMachineOperationHandlersAgentUpgradeRecoveryHandoffDefersAfterRecordFailure(t *testing.T) {
+	t.Parallel()
+
+	upgrader := &fakeAgentUpgradeExecutor{
+		stageErr:  errors.New("stage failed"),
+		abortErr:  errors.New("rollback failed"),
+		recordErr: errors.New("signal write failed"),
+	}
+	target := &machineOperationHandlers{
+		log:          slog.Default(),
+		agentUpgrade: upgrader,
+		gate:         newStartupGate(),
+	}
+	op := daemon.MachineOperation{
+		Name: "upgrade-1",
+		Parameters: map[string]string{
+			agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+			agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
+		},
+	}
+
+	_, err := target.reconcileAgentUpgrade(t.Context(), &fakeMachineOperationStore{}, op)
+	if err == nil {
+		t.Fatal("record failure returned no error")
+	}
+	if !upgrader.restarted {
+		t.Fatal("recovery restart was not scheduled")
+	}
+	if !target.gate.stopping.Load() {
+		t.Fatal("scheduled recovery did not stop admission")
+	}
+}
+
+type recoveryRetryDelegate struct {
+	countMachineOperations
+	handlers *machineOperationHandlers
+	op       daemon.MachineOperation
+}
+
+func (r *recoveryRetryDelegate) ReconcileMachineOperation(ctx context.Context, _ string) (ctrl.Result, error) {
+	r.calls++
+	return r.handlers.reconcileAgentUpgrade(ctx, &fakeMachineOperationStore{}, r.op)
+}
+
 func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *testing.T) {
 	t.Parallel()
 
@@ -535,25 +621,61 @@ func TestMachineOperationHandlersAgentUpgradeRecoveryRestartFailureRequeues(t *t
 		abortErr:   errors.New("rollback failed"),
 		restartErr: errors.New("restart failed"),
 	}
-	target := &machineOperationHandlers{log: slog.Default(), runtime: &fakeWorkerRuntime{}, agentUpgrade: upgrader}
-	op := daemon.MachineOperation{Name: "upgrade-1", Parameters: map[string]string{
-		agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
-		agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
-	}}
+	target := &machineOperationHandlers{
+		log:          slog.Default(),
+		runtime:      &fakeWorkerRuntime{},
+		agentUpgrade: upgrader,
+		gate:         newStartupGate(),
+	}
+	op := daemon.MachineOperation{
+		Name: "upgrade-1",
+		Parameters: map[string]string{
+			agentdeployment.UpgradeDownloadURLParameter: "https://example.com/agent.tar.gz",
+			agentdeployment.UpgradeSHA256Parameter:      strings.Repeat("a", 64),
+		},
+	}
 
-	_, err := target.reconcileAgentUpgrade(t.Context(), &fakeMachineOperationStore{}, op)
+	target.gate.open()
+	delegate := &recoveryRetryDelegate{handlers: target, op: op}
+	wrapped := gatedMachineOperationReconciler{delegate: delegate, gate: target.gate}
+
+	_, err := wrapped.ReconcileMachineOperation(t.Context(), op.Name)
 	if err == nil || !strings.Contains(err.Error(), "restart daemon for AgentUpgrade recovery") {
 		t.Fatalf("reconcileAgentUpgrade error = %v, want recovery restart error", err)
+	}
+	if target.gate.stopping.Load() {
+		t.Fatal("failed recovery restart stopped admission")
 	}
 
 	upgrader.pendingErr = errAgentUpgradeAlreadyPending
 	upgrader.restartErr = nil
 	upgrader.restarted = false
-	if _, err := target.reconcileAgentUpgrade(t.Context(), &fakeMachineOperationStore{}, op); err != nil {
+	if _, err := wrapped.ReconcileMachineOperation(t.Context(), op.Name); err != nil {
 		t.Fatalf("reconcileAgentUpgrade retry: %v", err)
+	}
+	if delegate.calls != 2 {
+		t.Fatalf("recovery dispatches = %d, want 2", delegate.calls)
 	}
 	if !upgrader.restarted {
 		t.Fatal("requeued recovery did not retry the daemon restart")
+	}
+	if !target.gate.stopping.Load() {
+		t.Fatal("scheduled recovery did not defer later operations")
+	}
+
+	if _, err := wrapped.ReconcileMachineOperation(t.Context(), "later"); err != nil {
+		t.Fatal(err)
+	}
+	if delegate.calls != 2 {
+		t.Fatalf("operation dispatched after recovery handoff: calls = %d", delegate.calls)
+	}
+	repave := &countRepave{}
+	gatedRepave := gatedRepaveReconciler{delegate: repave, gate: target.gate}
+	if _, err := gatedRepave.ReconcileRepave(t.Context(), "later"); err != nil {
+		t.Fatal(err)
+	}
+	if repave.calls != 0 {
+		t.Fatal("repave dispatched after recovery handoff")
 	}
 }
 
@@ -634,6 +756,7 @@ type fakeAgentUpgradeExecutor struct {
 	abortErr    error
 	restartErr  error
 	validateErr error
+	recordErr   error
 }
 
 func (f *fakeAgentUpgradeExecutor) Acquire() (io.Closer, error) {
@@ -652,18 +775,18 @@ func (f *fakeAgentUpgradeExecutor) RecordPending(context.Context, string) error 
 	return f.pendingErr
 }
 
-func (f *fakeAgentUpgradeExecutor) RetryRecovery(context.Context) error {
+func (f *fakeAgentUpgradeExecutor) RetryRecovery(context.Context) (agentdeployment.RecoveryRetryResult, error) {
 	if !f.recovering {
-		return nil
+		return agentdeployment.RecoveryRetryResult{}, nil
 	}
 	f.restarted = true
-	return f.restartErr
+	return agentdeployment.RecoveryRetryResult{RestartScheduled: f.restartErr == nil}, f.restartErr
 }
 
 func (f *fakeAgentUpgradeExecutor) RecordFailure(message string) error {
 	f.failure = message
 	f.recovering = true
-	return nil
+	return f.recordErr
 }
 
 func (f *fakeAgentUpgradeExecutor) Stage(context.Context, agentdeployment.UpgradeRequest) error {
@@ -756,7 +879,7 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 					ActiveMachine: "kube1",
 				},
 			}
-			reconciler, err := machineOperationReconciler(machineOperationReconcilerOptions{
+			result, err := machineOperationReconciler(machineOperationReconcilerOptions{
 				Client:         cache,
 				Reader:         apiServer,
 				Log:            discardLogger(),
@@ -773,12 +896,13 @@ func TestMachineOperationReconcilerReadsOperationsFromTheAPIServer(t *testing.T)
 				Uninstall:    operator.uninstall,
 				ClearConfig:  testTask{name: "remove-runtime-dirs"},
 				AgentUpgrade: &fakeAgentUpgradeExecutor{},
-			})
+				Gate:         newStartupGate(),
+			}, &fakeHostRebooter{})
 			if err != nil {
 				t.Fatalf("machineOperationReconciler: %v", err)
 			}
 
-			if _, err := reconciler.ReconcileMachineOperation(t.Context(), "reboot-1"); err != nil {
+			if _, err := result.reconciler.ReconcileMachineOperation(t.Context(), "reboot-1"); err != nil {
 				t.Fatalf("ReconcileMachineOperation: %v", err)
 			}
 			if operator.restarted != tc.wantReboot {

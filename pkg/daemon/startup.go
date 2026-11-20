@@ -134,8 +134,8 @@ func convergeContainerStartup(ctx context.Context, store stateStore, convergence
 	return held, nil
 }
 
-// openGateAfterAgentUpgradeJudgment publishes the result of an AgentUpgrade the daemon started
-// for, retrying, and then runs proceed, which opens the startup gate, unless the daemon has to be
+// openGateAfterAgentUpgradeJudgment publishes startup operation results, retrying, and then
+// runs proceed, which opens the startup gate, unless the daemon has to be
 // replaced first, as after it queued its restart from the host root. It runs nothing while the
 // upgrade's signal remains, as when recovery scheduled a restart into the last-good binary,
 // which opens the gate instead. Before proceed, it converges the service assets the daemon held
@@ -155,7 +155,7 @@ func openGateAfterAgentUpgradeJudgment(
 		pending, readErr := readSignal()
 		switch {
 		case publishErr != nil:
-			log.Warn("failed to publish AgentUpgrade startup result; will retry", "error", publishErr)
+			log.Warn("failed to publish operation startup results; will retry", "error", publishErr)
 		case readErr != nil:
 			log.Warn("failed to confirm AgentUpgrade startup signal; will retry", "error", readErr)
 		case pending != nil:
