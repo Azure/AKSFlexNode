@@ -17,7 +17,6 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
-- Disable Flex-managed Node Problem Detector installation and startup by default. Set `npd.enabled: true` to opt in.
 - Update the embedded Unbounded SDK to `v0.27.0` ([#479](https://github.com/Azure/AKSFlexNode/pull/479)).
 - Refresh supplemental networking, offline-artifact, and NVIDIA GPU labs for AKS Flex Node `v0.3.0` and Unbounded `v0.21.0`, with recorded validation scopes. Correct offline agent staging, ARM egress, Gantry's loopback port conflict, and WireGuard host-port syntax.
 

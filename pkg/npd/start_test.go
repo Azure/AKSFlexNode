@@ -59,7 +59,7 @@ func TestRenderedNPDUnitUsesCanonicalKubeconfig(t *testing.T) {
 					APIServer: "https://example.hcp.westus.azmk8s.io:443",
 				},
 			}
-			task, ok := Start(slog.Default(), &config.Config{Npd: config.NPDConfig{Enabled: true}}, root, nodeStart, mode).(*startTask)
+			task, ok := Start(slog.Default(), &config.Config{}, root, nodeStart, mode).(*startTask)
 			if !ok {
 				t.Fatal("Start did not return *startTask")
 			}

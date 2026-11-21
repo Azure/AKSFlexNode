@@ -342,9 +342,6 @@ node_join_kubeadm() {
     },
     "requireMachineRegistration": true
   },
-  "npd": {
-    "enabled": true
-  },
   "components": {
     "kubernetes": "${E2E_KUBERNETES_VERSION}",
     "containerd": "${E2E_CONTAINERD_VERSION}",
