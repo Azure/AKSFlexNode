@@ -566,18 +566,27 @@ isolation_all() {
     _isolation_wait_runtime "${vm_ip}" "${mode}"
     validate_node_joined "${vm_name}"
     validate_node_ip "${vm_name}" "$(state_get token_vm_private_ip)"
+    validate_kubelet_extra_configuration "${vm_name}" "${vm_ip}" \
+      serializeImagePulls=false maxParallelImagePulls=4 \
+      imageGCHighThresholdPercent=85 logging.verbosity=2 logging.format=text
     smoke_test "${vm_name}" "${mode}-join"
     _isolation_reapply_and_restart "${vm_ip}" "${vm_name}" "${mode}" pre-repave
     _isolation_host_reboot "${vm_ip}" "${vm_name}" "${mode}"
     _host_soft_reboot "${vm_ip}" "${vm_name}" "${mode}" "${mode}"
     _isolation_repave "${vm_ip}" "${vm_name}" "${mode}"
     _isolation_reapply_and_restart "${vm_ip}" "${vm_name}" "${mode}" post-repave
+    validate_kubelet_extra_configuration "${vm_name}" "${vm_ip}" \
+      serializeImagePulls=false maxParallelImagePulls=4 \
+      imageGCHighThresholdPercent=85 logging.verbosity=2 logging.format=text
     node_unjoin_token
     _isolation_assert_clean "${vm_ip}" "${mode}"
     validate_node_absent "${vm_name}"
     node_join_token "" "${mode}"
     _isolation_wait_runtime "${vm_ip}" "${mode}"
     validate_node_joined "${vm_name}"
+    validate_kubelet_extra_configuration "${vm_name}" "${vm_ip}" \
+      serializeImagePulls=false maxParallelImagePulls=4 \
+      imageGCHighThresholdPercent=85 logging.verbosity=2 logging.format=text
     smoke_test "${vm_name}" "${mode}-rejoin"
     node_unjoin_token
     _isolation_assert_clean "${vm_ip}" "${mode}"
@@ -586,4 +595,7 @@ isolation_all() {
   # Preserve the normal runner's final nspawn deployment for log collection.
   node_join_token
   validate_node_joined "${vm_name}"
+  validate_kubelet_extra_configuration "${vm_name}" "${vm_ip}" \
+    serializeImagePulls=false maxParallelImagePulls=4 \
+    imageGCHighThresholdPercent=85 logging.verbosity=2 logging.format=text
 }

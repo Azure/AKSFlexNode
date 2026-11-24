@@ -93,6 +93,14 @@ node_join_token() {
       | .node.maxPods = $maxPods
       | .node.kubelet.systemReserved = {"cpu": $systemReservedCPU, "memory": $systemReservedMemory}
       | .node.kubelet.kubeReserved = {"cpu": $kubeReservedCPU, "memory": $kubeReservedMemory}
+      | .node.kubelet.verbosity = 2
+      | .node.kubelet.imageGCHighThreshold = 85
+      | .node.kubelet.extraConfiguration = {
+          "serializeImagePulls": false,
+          "maxParallelImagePulls": 4,
+          "imageGCHighThresholdPercent": 95,
+          "logging": {"format": "text", "verbosity": 9}
+        }
       | .components = (.components // {})
       | .components.kubernetes = $kubernetesVersion
       | .components.containerd = $containerdVersion
