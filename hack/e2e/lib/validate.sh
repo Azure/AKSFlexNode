@@ -131,16 +131,25 @@ quantity_to_bytes() {
 
 # ---------------------------------------------------------------------------
 # _read_applied_kubelet_config - Print the kubelet configuration applied inside
-# the nspawn machine as flattened `key=value` / `section.key=value` lines.
+# the worker as flattened `key=value` / `section.key=value` lines.
 # ---------------------------------------------------------------------------
 _read_applied_kubelet_config() {
   local vm_ip="$1"
 
   remote_exec "${vm_ip}" "sudo bash -s" <<'REMOTE'
 set -euo pipefail
-machine=$(machinectl list --no-legend | awk '$1 ~ /^kube[12]$/ {print $1; exit}')
-test -n "${machine}"
-systemd-run --quiet --pipe --wait --machine="${machine}" cat /var/lib/kubelet/config.yaml | awk '
+state=/etc/aks-flex-node/daemon-state.json
+mode=$(jq -er '.isolation // "nspawn"' "${state}")
+executor=()
+case "${mode}" in
+  nspawn)
+    machine=$(jq -er '.activeMachine' "${state}")
+    executor=(systemd-run --quiet --pipe --wait --machine="${machine}")
+    ;;
+  none|container) ;;
+  *) echo "Unknown worker isolation: ${mode}" >&2; exit 1 ;;
+esac
+timeout 20 "${executor[@]}" cat /var/lib/kubelet/config.yaml </dev/null | awk '
 function trim(value) { gsub(/^[ \t"]+|[ \t"]+$/, "", value); return value }
 /^[^[:space:]#-]/ {
   key = $0; sub(/:.*$/, "", key)
@@ -163,6 +172,29 @@ REMOTE
 _applied_kubelet_value() {
   local applied="$1" key="$2"
   awk -v key="${key}" 'index($0, key "=") == 1 { print substr($0, length(key) + 2); exit }' <<<"${applied}"
+}
+
+validate_kubelet_extra_configuration() {
+  local vm_name="$1" vm_ip="$2"
+  shift 2
+  local applied effective expectation key expected got
+  applied="$(_read_applied_kubelet_config "${vm_ip}")" || return 1
+  effective="$(kubectl get --raw "/api/v1/nodes/${vm_name}/proxy/configz")" || return 1
+  for expectation in "$@"; do
+    key="${expectation%%=*}"
+    expected="${expectation#*=}"
+    got="$(_applied_kubelet_value "${applied}" "${key}")"
+    if [[ "${got}" != "${expected}" ]]; then
+      log_error "Applied kubelet ${key} on '${vm_name}' is '${got}', want '${expected}'"
+      return 1
+    fi
+    got="$(jq -r --arg key "${key}" '.kubeletconfig | getpath($key | split(".")) | tostring' <<<"${effective}")" || return 1
+    if [[ "${got}" != "${expected}" ]]; then
+      log_error "Effective kubelet ${key} on '${vm_name}' is '${got}', want '${expected}'"
+      return 1
+    fi
+  done
+  log_success "Applied and effective extra kubelet configuration verified on '${vm_name}'"
 }
 
 # ---------------------------------------------------------------------------
@@ -533,6 +565,9 @@ validate_all_nodes() {
     "${E2E_KUBELET_MAX_PODS}" \
     "${E2E_KUBELET_SYSTEM_RESERVED_CPU}" "${E2E_KUBELET_SYSTEM_RESERVED_MEMORY}" \
     "${E2E_KUBELET_KUBE_RESERVED_CPU}" "${E2E_KUBELET_KUBE_RESERVED_MEMORY}" || failed=1
+  validate_kubelet_extra_configuration "${token_vm_name}" "${token_vm_ip}" \
+    serializeImagePulls=false maxParallelImagePulls=4 \
+    imageGCHighThresholdPercent=85 logging.verbosity=2 logging.format=text || failed=1
   validate_npd_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   validate_localdns_status "${msi_vm_name}" "${msi_vm_ip}" || failed=1
   if [[ "${_E2E_LOCALDNS_REBOOT_VALIDATED}" != "1" ]]; then

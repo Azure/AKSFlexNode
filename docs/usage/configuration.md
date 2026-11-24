@@ -256,6 +256,7 @@ repave, and `Preferred` validates the profile without enabling the service.
 
 | Name | Type | Description | Sample Value |
 |------|------|-------------|--------------|
+| `node.kubelet.extraConfiguration` | object | Optional untyped additional `KubeletConfiguration` fields. Keys and types depend on the configured Kubernetes version. Existing typed Flex settings take precedence. | `{ "serializeImagePulls": false, "maxParallelImagePulls": 4 }` |
 | `node.kubelet.verbosity` | integer | Kubelet log verbosity. | `2` |
 | `node.kubelet.imageGCHighThreshold` | integer | Image garbage collection high threshold percentage. | `85` |
 | `node.kubelet.imageGCLowThreshold` | integer | Image garbage collection low threshold percentage. | `80` |
@@ -271,6 +272,29 @@ repave, and `Preferred` validates the profile without enabling the service.
 Provider paths must be clean absolute machine paths without whitespace or systemd argument characters. Include the provider files in the OCI rootfs or expose them with read-only `bootstrap.additionalHostMounts`.
 
 The image credential provider executes a plugin to obtain short-lived pull credentials; it does not place registry passwords or tokens in the FlexNode configuration. Do not store static registry credentials in this file or provider configuration.
+
+### Extra Kubelet Configuration
+
+`node.kubelet.extraConfiguration` passes additional fields to the SDK's kubelet configuration overlay in all worker modes. Flex does not validate the Kubernetes-version-specific schema or guarantee that a field is supported by every Kubernetes version. Choose keys and value types from the target version's `KubeletConfiguration` API.
+
+The precedence is SDK baseline defaults, then extra configuration, then existing typed Flex settings (including their defaults), then SDK-owned settings. Nested fields merge without discarding unrelated siblings: extra `logging.format` can coexist with typed `verbosity`, which controls `logging.verbosity`. Attempts to supply SDK-owned fields such as authentication, `authorization.mode`, `clusterDNS`, or `containerRuntimeEndpoint` are rejected during configuration validation.
+
+For Kubernetes 1.34, enable up to four concurrent image pulls with:
+
+```json
+{
+  "node": {
+    "kubelet": {
+      "extraConfiguration": {
+        "serializeImagePulls": false,
+        "maxParallelImagePulls": 4
+      }
+    }
+  }
+}
+```
+
+`maxParallelImagePulls` must be positive; values greater than one require `serializeImagePulls: false`.
 
 ### Embedded Agent And Kubelet Kubeconfigs
 

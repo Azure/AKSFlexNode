@@ -190,7 +190,7 @@ func kubeletConfiguration(cfg *Config) map[string]any {
 		maxPods = defaultMaxPods
 	}
 
-	return map[string]any{
+	configuration := map[string]any{
 		"maxPods":                     maxPods,
 		"systemReserved":              systemReservedOrDefault(cfg),
 		"kubeReserved":                kubeReservedOrDefault(cfg, maxPods),
@@ -199,6 +199,35 @@ func kubeletConfiguration(cfg *Config) map[string]any {
 		"logging": map[string]any{
 			"verbosity": cfg.Node.Kubelet.Verbosity,
 		},
+	}
+	if cfg.Node.Kubelet.ExtraConfiguration == nil {
+		return configuration
+	}
+
+	// The SDK's JSON-shaped clone keeps the overlay independent of the loaded config.
+	extra := (&agentconfig.AgentConfig{Kubelet: agentconfig.AgentKubeletConfig{
+		Configuration: cfg.Node.Kubelet.ExtraConfiguration,
+	}}).DeepCopy().Kubelet.Configuration
+	mergeKubeletConfiguration(extra, configuration)
+	return extra
+}
+
+// Typed fields take precedence, while untyped sibling fields survive nested merges.
+func mergeKubeletConfiguration(extra, typed map[string]any) {
+	for key, value := range typed {
+		if nested, ok := extra[key].(map[string]any); ok {
+			switch fields := value.(type) {
+			case map[string]any:
+				mergeKubeletConfiguration(nested, fields)
+				value = nested
+			case map[string]string:
+				for name, reservation := range fields {
+					nested[name] = reservation
+				}
+				value = nested
+			}
+		}
+		extra[key] = value
 	}
 }
 

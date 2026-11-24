@@ -295,6 +295,10 @@ func (cfg *Config) BootstrapDisconnectToleranceEnabled() bool {
 
 // KubeletConfig holds kubelet-specific configuration settings.
 type KubeletConfig struct {
+	// ExtraConfiguration passes through additional KubeletConfiguration fields.
+	// Supported keys and value types depend on the configured Kubernetes version.
+	ExtraConfiguration map[string]any `json:"extraConfiguration,omitempty"`
+
 	Verbosity            int               `json:"verbosity"`
 	ImageGCHighThreshold int               `json:"imageGCHighThreshold"`
 	ImageGCLowThreshold  int               `json:"imageGCLowThreshold"`
@@ -1149,6 +1153,7 @@ func (c *KubeletConfig) validate() error {
 
 	kubelet := agentconfig.AgentKubeletConfig{
 		KubeconfigData: []byte(c.KubeconfigData),
+		Configuration:  c.ExtraConfiguration,
 	}
 	if c.ImageCredentialProvider != nil {
 		kubelet.ImageCredentialProvider = &agentconfig.ImageCredentialProvider{

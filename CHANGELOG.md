@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- Support untyped, Kubernetes-version-dependent `node.kubelet.extraConfiguration` fields, including image-pull concurrency settings, while retaining precedence for existing typed settings ([#483](https://github.com/Azure/AKSFlexNode/issues/483)).
+
 ## [0.4.0] - 2026-11-20
 
 ### Added

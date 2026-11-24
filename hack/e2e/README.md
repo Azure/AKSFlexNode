@@ -72,7 +72,7 @@ The default `all` command runs:
 4. Deploy a local registry in `kube-system`, build and push the `aks-flex-controller` image to that registry, then deploy the controller in `kube-system`.
 5. Reuse the MSI VM to verify that `EnsureMachine` registers a missing Machine through ARM, then reset the host.
 6. Join all provisioned Flex Node VMs through the existing controller-backed lifecycle paths.
-7. Validate node readiness, node-problem-detector status, and run smoke workloads.
+7. Validate node readiness, node-problem-detector status, and run smoke workloads. The token node uses `extraConfiguration` to enable four parallel image pulls and verifies that typed settings retain precedence and nested logging fields survive the merge; the same checks run after none/OCI joins, repaves, and rejoins.
 8. Unjoin all Flex Nodes and verify they are absent, including reset cleanup of host network artifacts.
 9. Rejoin all Flex Nodes and validate again.
 10. Submit `HostSoftReboot` on each joined nspawn node, then validate the installed nspawn lifecycle helper and generated systemd hooks and reconcile a running node through the helper.
