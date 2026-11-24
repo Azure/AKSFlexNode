@@ -6,6 +6,10 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Enable kubelet serving certificate rotation by default. Kubelet requests a cluster-signed serving certificate; the cluster must approve and sign the request. Existing nodes pick up the default when the agent regenerates their kubelet configuration, not on an agent-only upgrade ([#485](https://github.com/Azure/AKSFlexNode/pull/485)).
+
 ## [0.4.0] - 2026-11-20
 
 ### Added
