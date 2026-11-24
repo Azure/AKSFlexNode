@@ -263,6 +263,7 @@ repave, and `Preferred` validates the profile without enabling the service.
 | `node.kubelet.clusterFQDN` | string | Kubernetes API server FQDN. Required for bootstrap token mode. | `example.hcp.canadacentral.azmk8s.io` |
 | `node.kubelet.caCertData` | string | Base64-encoded cluster CA data. Required for bootstrap token mode. | `<base64-ca-data>` |
 | `node.kubelet.nodeIP` | string | Optional node IP override for kubelet `--node-ip`. | `10.0.0.4` |
+| `node.kubelet.serverTLSBootstrap` | boolean | Enable kubelet serving certificate rotation. Defaults to `true`; set to `false` to opt out. | `false` |
 | `node.kubelet.systemReserved` | object | Optional system daemon resource reservation. Defaults to zero CPU and memory. | `{ "cpu": "50m", "memory": "100Mi" }` |
 | `node.kubelet.kubeReserved` | object | Optional Kubernetes daemon resource reservation. By default, CPU follows the AKS core-based reservation tiers and memory is the lesser of `20 Mi` per maximum pod plus `50 Mi`, or 25% of host memory. | `{ "cpu": "200m", "memory": "650Mi" }` |
 | `node.kubelet.imageCredentialProvider.configPath` | string | Optional absolute path inside the nspawn machine to a kubelet exec image credential provider configuration file or supported configuration directory. Must be set with `binDir`. | `/etc/kubernetes/credential-provider.yaml` |
@@ -271,6 +272,12 @@ repave, and `Preferred` validates the profile without enabling the service.
 Provider paths must be clean absolute machine paths without whitespace or systemd argument characters. Include the provider files in the OCI rootfs or expose them with read-only `bootstrap.additionalHostMounts`.
 
 The image credential provider executes a plugin to obtain short-lived pull credentials; it does not place registry passwords or tokens in the FlexNode configuration. Do not store static registry credentials in this file or provider configuration.
+
+### Kubelet Serving Certificates
+
+The agent enables kubelet serving certificate rotation by default. Kubelet requests a signed TLS certificate for its HTTPS endpoint using the `kubernetes.io/kubelet-serving` signer. The cluster must approve and sign these requests, including renewals. Until the first certificate is issued, the node can be `Ready` while `kubectl logs`, `kubectl exec`, and `kubectl port-forward` fail. Check `kubectl get csr` for a pending serving request from `system:node:<node-name>`.
+
+Existing nodes pick up the default when the agent regenerates their kubelet configuration and kubelet starts with it, such as during a repave. An agent-only upgrade does not change the running kubelet configuration. Serving certificate rotation does not change how kubelet authenticates to the API server.
 
 ### Embedded Agent And Kubelet Kubeconfigs
 
@@ -282,7 +289,7 @@ In this mode:
 - `node.kubelet.kubeconfigData` is written byte-for-byte to `/var/lib/kubelet/kubeconfig`; kubelet and Node Problem Detector use it.
 - The active contexts must use the same API server and CA. A trailing server `/` and equivalent CA bundles with different PEM formatting or certificate order are accepted. `node.kubelet.clusterFQDN`, `node.kubelet.caCertData`, and `azure.bootstrapToken` are not required.
 - If the kubelet uses impersonation, its `as` user must be `system:node:<agent.nodeName>`, using the resolved host name when `agent.nodeName` is omitted. Mismatched node names, API servers, and CAs are permanent configuration errors (exit status 78).
-- Kubelet TLS bootstrap and the daemon client-certificate provider are bypassed; the kubeconfig exec credentials remain authoritative. Any previously issued daemon client certificate and private key are removed when the daemon enters this mode.
+- Kubelet client certificate bootstrap and the daemon client-certificate provider are bypassed; the kubeconfig exec credentials remain authoritative. Any previously issued daemon client certificate and private key are removed when the daemon enters this mode.
 - Arc can remain enabled for ARM authentication and makes the agent service depend on `himdsd.service`.
 
 The kubeconfigs must be self-contained: use embedded CA, client certificate, and client key data rather than file references. Both active clusters must include matching CA data; unused clusters need not embed a CA. Token-file references are rejected. Exec commands must be absolute and available in the host for the agent kubeconfig or inside nspawn for the kubelet kubeconfig. The agent exec command must not use `/usr/local/bin/aks-flex-node`: host startup retires that seed binary. Use `/opt/unbounded/agent/bin/aks-flex-node` instead; the kubelet can still use `/usr/local/bin/aks-flex-node` inside nspawn. Host preflight checks the active agent exec command without running it and does not try to execute or locate the kubelet's container-only plugin.

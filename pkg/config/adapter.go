@@ -190,10 +190,12 @@ func kubeletConfiguration(cfg *Config) map[string]any {
 		maxPods = defaultMaxPods
 	}
 
+	serverTLSBootstrap := cfg.Node.Kubelet.ServerTLSBootstrap
 	return map[string]any{
 		"maxPods":                     maxPods,
 		"systemReserved":              systemReservedOrDefault(cfg),
 		"kubeReserved":                kubeReservedOrDefault(cfg, maxPods),
+		"serverTLSBootstrap":          serverTLSBootstrap == nil || *serverTLSBootstrap,
 		"imageGCHighThresholdPercent": cfg.Node.Kubelet.ImageGCHighThreshold,
 		"imageGCLowThresholdPercent":  cfg.Node.Kubelet.ImageGCLowThreshold,
 		"logging": map[string]any{

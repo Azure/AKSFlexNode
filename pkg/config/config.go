@@ -305,6 +305,9 @@ type KubeletConfig struct {
 	SystemReserved       map[string]string `json:"systemReserved,omitempty"` // Resources reserved for OS system daemons; defaults to zero
 	KubeReserved         map[string]string `json:"kubeReserved,omitempty"`   // Resources reserved for Kubernetes daemons; defaults follow AKS guidance
 
+	// ServerTLSBootstrap overrides kubelet serving certificate rotation, which defaults to enabled.
+	ServerTLSBootstrap *bool `json:"serverTLSBootstrap,omitempty"`
+
 	// ImageCredentialProvider configures kubelet's exec image credential
 	// provider. The referenced paths are inside the nspawn machine.
 	ImageCredentialProvider *ImageCredentialProviderConfig `json:"imageCredentialProvider,omitempty"`
