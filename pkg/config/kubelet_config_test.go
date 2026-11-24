@@ -27,6 +27,32 @@ func TestKubeletConfigJSON(t *testing.T) {
 	}
 }
 
+func TestKubeletServerTLSBootstrap(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct {
+		name string
+		json string
+		want bool
+	}{
+		{name: "default", json: `{}`, want: true},
+		{name: "explicitly enabled", json: `{"node":{"kubelet":{"serverTLSBootstrap":true}}}`, want: true},
+		{name: "explicitly disabled", json: `{"node":{"kubelet":{"serverTLSBootstrap":false}}}`, want: false},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			var cfg Config
+			if err := json.Unmarshal([]byte(tt.json), &cfg); err != nil {
+				t.Fatalf("unmarshal config: %v", err)
+			}
+			if got := ToAgentConfig(&cfg, "kube1").Kubelet.Configuration["serverTLSBootstrap"]; got != tt.want {
+				t.Fatalf("serverTLSBootstrap=%v, want %t", got, tt.want)
+			}
+		})
+	}
+}
+
 func TestKubeletConfigValidate(t *testing.T) {
 	t.Parallel()
 
