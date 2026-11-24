@@ -324,9 +324,11 @@ git fetch origin main
 git rev-parse origin/main
 ```
 
+For a prerelease from a non-main branch, dispatch the workflow from that branch with `allow_prerelease_branch=true` in both runs. The target SHA must be reachable from that branch, and the branch must be allowed by the `release` environment's deployment policy. Required checks and release approval still apply; stable releases remain main-only.
+
 Leave `dry_run` enabled first. A dry run validates the changelog and builds the binaries and controller image without creating a tag or publishing anything. If it succeeds, rerun the workflow with `dry_run` disabled and the same version and `target_sha`. The publishing run:
 
-1. Checks out the explicitly selected commit, verifies it is reachable from `main`, or verifies that an existing tag points to that commit when resuming a release.
+1. Checks out the explicitly selected commit, verifies it is reachable from the release source branch, or verifies that an existing tag points to that commit when resuming a release.
 2. Validates the version and changelog.
 3. Verifies that the required build, test, lint, security, and code-quality checks passed for the selected commit.
 4. Builds release artifacts.

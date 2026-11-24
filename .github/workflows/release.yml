@@ -16,6 +16,11 @@ on:
         required: true
         default: true
         type: boolean
+      allow_prerelease_branch:
+        description: "Allow prerelease publishing from the dispatch branch; release approval is still required"
+        required: true
+        default: false
+        type: boolean
 
 permissions:
   checks: read
@@ -49,6 +54,7 @@ jobs:
           REQUESTED_VERSION: ${{ inputs.version }}
           REQUESTED_TARGET_SHA: ${{ inputs.target_sha }}
           DRY_RUN: ${{ inputs.dry_run }}
+          ALLOW_PRERELEASE_BRANCH: ${{ inputs.allow_prerelease_branch }}
         run: |
           set -euo pipefail
 
@@ -63,8 +69,12 @@ jobs:
           if [[ "${DRY_RUN}" == "true" ]]; then
             publish=false
           fi
-          if [[ "${publish}" == "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
-            echo "Publishing runs must be dispatched from main, not ${GITHUB_REF}" >&2
+          branch_prerelease=false
+          if [[ "${ALLOW_PRERELEASE_BRANCH}" == "true" && "${version}" == *-* && "${GITHUB_REF}" == refs/heads/* ]]; then
+            branch_prerelease=true
+          fi
+          if [[ "${publish}" == "true" && "${GITHUB_REF}" != "refs/heads/main" && "${branch_prerelease}" != "true" ]]; then
+            echo "Publishing from ${GITHUB_REF} requires a prerelease version and allow_prerelease_branch=true; stable releases require main" >&2
             exit 1
           fi
 
@@ -86,12 +96,19 @@ jobs:
           fi
 
           git fetch --no-tags origin refs/heads/main:refs/remotes/origin/main
-          if ! git merge-base --is-ancestor "${target_sha}" refs/remotes/origin/main; then
+          release_ref=refs/remotes/origin/main
+          release_source=main
+          if [[ "${branch_prerelease}" == "true" && "${GITHUB_REF}" != "refs/heads/main" ]]; then
+            release_ref=refs/remotes/origin/release-source
+            release_source="${GITHUB_REF#refs/heads/}"
+            git fetch --no-tags origin "${GITHUB_REF}:${release_ref}"
+          fi
+          if ! git merge-base --is-ancestor "${target_sha}" "${release_ref}"; then
             if [[ "${publish}" == "true" ]]; then
-              echo "Release commit ${target_sha} is not reachable from main" >&2
+              echo "Release commit ${target_sha} is not reachable from ${release_source}" >&2
               exit 1
             fi
-            echo "::warning::Dry-run commit ${target_sha} is not reachable from main"
+            echo "::warning::Dry-run commit ${target_sha} is not reachable from ${release_source}"
           fi
 
           git show "${target_sha}:CHANGELOG.md" > changelog.md
